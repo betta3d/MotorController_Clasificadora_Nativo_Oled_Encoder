@@ -88,6 +88,11 @@ extern float HOMING_J_REAPP_PPS3;
 extern float HOMING_BACKOFF_DEG;
 extern uint32_t HOMING_TIMEOUT_STEPS;
 
+// Homing avanzado (nuevos globals)
+extern uint32_t TIEMPO_ESTABILIZACION_HOME; // ms, default 2000
+extern float    DEG_OFFSET;                 // degrees, default 45.0
+extern uint32_t MAX_STEPS_TO_FIND_SENSOR;   // steps, default 4800
+
 // UI
 extern UiScreen uiScreen;
 extern UiScreen previousUiScreen; // Para volver de dialogos

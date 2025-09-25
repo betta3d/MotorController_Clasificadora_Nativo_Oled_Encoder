@@ -65,6 +65,11 @@ float HOMING_J_REAPP_PPS3  = 15000.0f;
 float HOMING_BACKOFF_DEG   = 3.0f;
 uint32_t HOMING_TIMEOUT_STEPS = 0;
 
+// Homing avanzado defaults
+uint32_t TIEMPO_ESTABILIZACION_HOME = 2000; // 2 segundos
+float    DEG_OFFSET = 45.0f;                // 45 grados
+uint32_t MAX_STEPS_TO_FIND_SENSOR = 4800;   // 4800 pasos
+
 // UI
 UiScreen uiScreen = UiScreen::STATUS;
 UiScreen previousUiScreen = UiScreen::STATUS;
