@@ -8,6 +8,14 @@
 
 namespace App {
 
+// Nuevo: temporizadores dedicados para generar STEP con alta resolución
+static esp_timer_handle_t stepTimer = nullptr;     // Programa el próximo flanco de subida (paso)
+static esp_timer_handle_t stepOffTimer = nullptr;  // Apaga el pulso tras STEP_PULSE_WIDTH_US
+
+// Adelantos de funciones
+static void IRAM_ATTR stepOnTick(void* /*arg*/);
+static void IRAM_ATTR stepOffTick(void* /*arg*/);
+
 static void IRAM_ATTR controlTick(void* /*arg*/) {
   const float dt    = (float)CONTROL_DT_US * 1e-6f;
   const float dt_us = (float)CONTROL_DT_US;
@@ -80,68 +88,7 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
     v = v_goal;
     a = 0.0f;
   }
-
-  // Pulsos STEP
-  uint32_t currModBefore = modSteps();
-
-  if (v > 1.0f && (state == SysState::RUNNING || state == SysState::ROTATING || state == SysState::HOMING_SEEK || state == SysState::HOMING_BACKOFF || state == SysState::HOMING_REAPP)) {
-    // CRÍTICO: ISR ejecuta cada 1ms (1000μs)
-    // v_max_real = 1000pps para respetar 1kHz ISR
-    float v_real = (v > 1000.0f) ? 1000.0f : v;
-    const float period_us = 1000.0f; // Fijo: 1 pulso cada 1ms máximo
-    stepAccumulatorUs += dt_us;
-
-    if (stepPinState == HIGH) {
-      pulseHoldUs += (uint32_t)dt_us;
-      if (pulseHoldUs >= STEP_PULSE_WIDTH_US) {
-        digitalWrite(PIN_STEP, LOW);
-        stepPinState = LOW;
-        pulseHoldUs = 0;
-      }
-    }
-
-    while (stepAccumulatorUs >= period_us) {
-      digitalWrite(PIN_STEP, HIGH);
-      stepPinState = HIGH;
-      pulseHoldUs  = 0;
-
-      // Actualizar totalSteps según dirección
-      if (state == SysState::ROTATING && !rotateDirection) {
-        totalSteps--; // CCW en modo ROTATING
-      } else {
-        totalSteps++; // CW por defecto
-      }
-      stepAccumulatorUs -= period_us;
-
-      if (state == SysState::HOMING_SEEK || state == SysState::HOMING_BACKOFF || state == SysState::HOMING_REAPP) {
-        homingStepCounter++;
-      }
-      
-      // Contador independiente para ROTATING
-      if (state == SysState::ROTATING) {
-        if (rotateDirection) {
-          rotateStepsCounter++;
-        } else {
-          rotateStepsCounter--;
-        }
-      }
-    }
-  } else {
-    if (stepPinState == HIGH) {
-      digitalWrite(PIN_STEP, LOW);
-      stepPinState = LOW;
-      pulseHoldUs = 0;
-    }
-    stepAccumulatorUs = 0.0f;
-  }
-
-  // ONE_REV: una vuelta y parar suave
-  if (state == SysState::RUNNING && RUN_MODE == RunMode::ONE_REV) {
-    uint32_t currModAfter = modSteps();
-    if (crossedZeroThisTick(currModBefore, currModAfter)) {
-      forceStopTarget();
-    }
-  }
+  // Pulsos STEP ahora generados por stepTimer (alta resolución)
 
   // Modo ROTATING: verificar si se completaron los pasos objetivo
   if (state == SysState::ROTATING) {
@@ -198,6 +145,108 @@ void controlStart() {
   args.name = "ctrl";
   esp_timer_create(&args, &controlTimer);
   esp_timer_start_periodic(controlTimer, CONTROL_DT_US);
+
+  // Crear timer para apagar el pulso (one-shot)
+  esp_timer_create_args_t offArgs;
+  offArgs.callback = &stepOffTick;
+  offArgs.arg = nullptr;
+  offArgs.dispatch_method = ESP_TIMER_TASK; // usar task-context para digitalWrite
+  offArgs.name = "step_off";
+  esp_timer_create(&offArgs, &stepOffTimer);
+
+  // Crear timer para generar pasos (one-shot, reprogramado cada vez)
+  esp_timer_create_args_t stepArgs;
+  stepArgs.callback = &stepOnTick;
+  stepArgs.arg = nullptr;
+  stepArgs.dispatch_method = ESP_TIMER_TASK;
+  stepArgs.name = "step";
+  esp_timer_create(&stepArgs, &stepTimer);
+  // Arranque perezoso: primera comprobación en 1 ms
+  esp_timer_start_once(stepTimer, 1000);
+}
+
+} // namespace App
+
+// ===== Implementación de los timers de STEP =====
+namespace App {
+
+static inline bool isMovingState() {
+  return (state == SysState::RUNNING || state == SysState::ROTATING ||
+          state == SysState::HOMING_SEEK || state == SysState::HOMING_BACKOFF ||
+          state == SysState::HOMING_REAPP);
+}
+
+static void IRAM_ATTR stepOffTick(void* /*arg*/) {
+  digitalWrite(PIN_STEP, LOW);
+  stepPinState = LOW;
+}
+
+static void IRAM_ATTR stepOnTick(void* /*arg*/) {
+  // Leer velocidad actual y estado
+  float v_now = v;
+
+  // Límite de seguridad para no sobrecargar el planificador: 20 kpps
+  const float MAX_PPS = 20000.0f;
+  if (v_now < 0.0f) v_now = 0.0f;
+  if (v_now > MAX_PPS) v_now = MAX_PPS;
+
+  // ¿Debemos generar un paso?
+  bool canStep = isMovingState() && (v_now > 1.0f);
+
+  if (canStep) {
+    // Subir STEP
+    digitalWrite(PIN_STEP, HIGH);
+    stepPinState = HIGH;
+
+    // Apagar tras el ancho de pulso requerido
+    if (stepOffTimer) {
+      esp_timer_start_once(stepOffTimer, STEP_PULSE_WIDTH_US);
+    }
+
+    // Actualizar contadores de pasos y dirección
+    uint32_t prevMod = modSteps();
+    if (dirCW) {
+      totalSteps++;
+    } else {
+      totalSteps--;
+    }
+
+    // Contadores específicos de modos
+    if (state == SysState::HOMING_SEEK || state == SysState::HOMING_BACKOFF || state == SysState::HOMING_REAPP) {
+      homingStepCounter++;
+    }
+    if (state == SysState::ROTATING) {
+      if (rotateDirection) rotateStepsCounter++; else rotateStepsCounter--;
+    }
+
+    // ONE_REV: detectar cruce de cero y ordenar parada suave
+    if (state == SysState::RUNNING && RUN_MODE == RunMode::ONE_REV) {
+      uint32_t currMod = modSteps();
+      if (crossedZeroThisTick(prevMod, currMod)) {
+        forceStopTarget();
+      }
+    }
+  }
+
+  // Programar la siguiente llamada del generador de pasos
+  uint64_t nextDelayUs;
+  if (canStep) {
+    // Calcular periodo según velocidad
+    float v_sched = (v_now > 1.0f) ? v_now : 1.0f;
+    float period_us = 1000000.0f / v_sched; // 1e6 / pps
+    if (period_us < (float)(STEP_PULSE_WIDTH_US + 5)) {
+      // Asegurar periodo mínimo mayor al ancho de pulso (margen 5us)
+      period_us = (float)(STEP_PULSE_WIDTH_US + 5);
+    }
+    nextDelayUs = (uint64_t)period_us;
+  } else {
+    // Reintentar en 1 ms para ver si hay movimiento
+    nextDelayUs = 1000;
+  }
+
+  if (stepTimer) {
+    esp_timer_start_once(stepTimer, nextDelayUs);
+  }
 }
 
 } // namespace App

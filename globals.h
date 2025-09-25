@@ -73,9 +73,11 @@ struct SectorRange {
   bool wraps;     // true si cruza 360->0 (ej: 350-10)
 };
 
-extern SectorRange DEG_LENTO;     // Sector lento (tomar/soltar huevo)
-extern SectorRange DEG_MEDIO;     // Sector medio (transporte)
-extern SectorRange DEG_RAPIDO;    // Sector rápido (retorno vacío)
+// 4 sectores que cubren 360° pero con 3 velocidades (Lento/Medio/Rápido)
+extern SectorRange DEG_LENTO_UP;    // 350°-10° (wrap) — tomar huevo (Lento)
+extern SectorRange DEG_MEDIO;       // 10°-170° — transporte (Medio)
+extern SectorRange DEG_LENTO_DOWN;  // 170°-190° — dejar huevo (Lento)
+extern SectorRange DEG_TRAVEL;      // 190°-350° — retorno sin carga (Rápido)
 
 // Homing pps
 extern bool  HOMING_SEEK_DIR_CW;

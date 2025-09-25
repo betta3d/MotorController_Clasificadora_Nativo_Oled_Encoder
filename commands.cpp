@@ -68,7 +68,7 @@ void processCommands() {
         // Esperar un momento para que se detenga
         delay(100);
       }
-      
+    
       // Configurar rotación
       applyConfigToProfiles(); // Asegurar perfiles actualizados
       rotateTargetRevs = value;
@@ -93,7 +93,7 @@ void processCommands() {
       
       // Iniciar rotación
       uint32_t now = millis();
-      v_goal = 0.0f; a = 0.0f;
+      //v_goal = 0.0f; a = 0.0f;
       state = SysState::ROTATING;
       uiScreen = UiScreen::STATUS;
       screensaverActive = false;
@@ -157,13 +157,15 @@ void processCommands() {
     Serial.printf("GEAR_RATIO: %.2f - Relacion engranajes (GEAR_RATIO=1.0)\n", GEAR_RATIO);
     Serial.printf("stepsPerRev: %lu - Pasos totales por revolucion (calculado)\n", stepsPerRev);
     
-    Serial.println("\n=== SECTORES ANGULARES ===");
-    Serial.printf("DEG_LENTO: %.0f°-%.0f°%s - Zona lenta tomar/soltar huevo (DEG_LENTO=355-10)\n", 
-                 DEG_LENTO.start, DEG_LENTO.end, DEG_LENTO.wraps ? " (wrap)" : "");
-    Serial.printf("DEG_MEDIO: %.0f°-%.0f°%s - Zona media transporte (DEG_MEDIO=10-180)\n", 
-                 DEG_MEDIO.start, DEG_MEDIO.end, DEG_MEDIO.wraps ? " (wrap)" : "");
-    Serial.printf("DEG_RAPIDO: %.0f°-%.0f°%s - Zona rapida retorno vacio (DEG_RAPIDO=180-355)\n", 
-                 DEG_RAPIDO.start, DEG_RAPIDO.end, DEG_RAPIDO.wraps ? " (wrap)" : "");
+  Serial.println("\n=== SECTORES ANGULARES (4) ===");
+  Serial.printf("LENTO_UP: %.0f°-%.0f°%s - Tomar huevo (Lento) (DEG_LENTO_UP=350-10)\n", 
+         DEG_LENTO_UP.start, DEG_LENTO_UP.end, DEG_LENTO_UP.wraps ? " (wrap)" : "");
+  Serial.printf("MEDIO:    %.0f°-%.0f°%s - Transporte (Medio) (DEG_MEDIO=10-170)\n", 
+         DEG_MEDIO.start, DEG_MEDIO.end, DEG_MEDIO.wraps ? " (wrap)" : "");
+  Serial.printf("LENTO_DN: %.0f°-%.0f°%s - Dejar huevo (Lento) (DEG_LENTO_DOWN=170-190)\n", 
+         DEG_LENTO_DOWN.start, DEG_LENTO_DOWN.end, DEG_LENTO_DOWN.wraps ? " (wrap)" : "");
+  Serial.printf("TRAVEL:   %.0f°-%.0f°%s - Retorno (Rápido) (DEG_TRAVEL=190-350)\n", 
+         DEG_TRAVEL.start, DEG_TRAVEL.end, DEG_TRAVEL.wraps ? " (wrap)" : "");
     
     Serial.println("\n=== PARAMETROS HOMING ===");
     Serial.printf("SEEK_DIR: %s - Direccion busqueda inicial (HOMING_SEEK_DIR=CW/CCW)\n", HOMING_SEEK_DIR_CW ? "CW" : "CCW");
@@ -185,22 +187,22 @@ void processCommands() {
     Serial.println("\n=== COMANDOS DISPONIBLES ===");
     Serial.println("CONFIG: CM_PER_REV=25.4 | V_SLOW=5.0 | V_MED=10.0 | V_FAST=15.0 | ACCEL=50.0 | JERK=100.0");
     Serial.println("MECANICO: MOTOR_STEPS=200 | MICROSTEPPING=16 | GEAR_RATIO=1.0");
-    Serial.println("SECTORES: DEG_LENTO=355-10 | DEG_MEDIO=10-180 | DEG_RAPIDO=180-355"); 
+  Serial.println("SECTORES: DEG_LENTO_UP=350-10 | DEG_MEDIO=10-170 | DEG_LENTO_DOWN=170-190 | DEG_TRAVEL=190-350"); 
     Serial.println("HOMING: HOMING_SEEK_DIR=CW | HOMING_SEEK_VEL=800 | HOMING_BACKOFF=3.0 | etc");
     Serial.println("CONTROL: SCURVE=ON/OFF | ROTAR=N | STOP | STATUS");
     
   // ===== COMANDOS SECTORES ANGULARES =====
-  } else if (upperLine.startsWith("DEG_LENTO=")) {
-    String rangeStr = upperLine.substring(10);
+  } else if (upperLine.startsWith("DEG_LENTO_UP=")) {
+    String rangeStr = upperLine.substring(13);
     float start, end;
     bool wraps;
     if (parseSectorRange(rangeStr, start, end, wraps)) {
-      DEG_LENTO.start = start;
-      DEG_LENTO.end = end;
-      DEG_LENTO.wraps = wraps;
-      Serial.printf("DEG_LENTO actualizado: %.0f-%.0f%s\n", start, end, wraps ? " (wrap)" : "");
+      DEG_LENTO_UP.start = start;
+      DEG_LENTO_UP.end = end;
+      DEG_LENTO_UP.wraps = wraps;
+      Serial.printf("DEG_LENTO_UP actualizado: %.0f-%.0f%s\n", start, end, wraps ? " (wrap)" : "");
     } else {
-      Serial.println("ERROR: Formato incorrecto. Use DEG_LENTO=start-end (ej: 355-10)");
+      Serial.println("ERROR: Formato incorrecto. Use DEG_LENTO_UP=start-end (ej: 350-10)");
     }
     
   } else if (upperLine.startsWith("DEG_MEDIO=")) {
@@ -216,17 +218,30 @@ void processCommands() {
       Serial.println("ERROR: Formato incorrecto. Use DEG_MEDIO=start-end (ej: 10-180)");
     }
     
-  } else if (upperLine.startsWith("DEG_RAPIDO=")) {
+  } else if (upperLine.startsWith("DEG_LENTO_DOWN=")) {
+    String rangeStr = upperLine.substring(15);
+    float start, end;
+    bool wraps;
+    if (parseSectorRange(rangeStr, start, end, wraps)) {
+      DEG_LENTO_DOWN.start = start;
+      DEG_LENTO_DOWN.end   = end;
+      DEG_LENTO_DOWN.wraps = wraps;
+      Serial.printf("DEG_LENTO_DOWN actualizado: %.0f-%.0f%s\n", start, end, wraps ? " (wrap)" : "");
+    } else {
+      Serial.println("ERROR: Formato incorrecto. Use DEG_LENTO_DOWN=start-end (ej: 170-190)");
+    }
+
+  } else if (upperLine.startsWith("DEG_TRAVEL=")) {
     String rangeStr = upperLine.substring(11);
     float start, end;
     bool wraps;
     if (parseSectorRange(rangeStr, start, end, wraps)) {
-      DEG_RAPIDO.start = start;
-      DEG_RAPIDO.end = end;
-      DEG_RAPIDO.wraps = wraps;
-      Serial.printf("DEG_RAPIDO actualizado: %.0f-%.0f%s\n", start, end, wraps ? " (wrap)" : "");
+      DEG_TRAVEL.start = start;
+      DEG_TRAVEL.end   = end;
+      DEG_TRAVEL.wraps = wraps;
+      Serial.printf("DEG_TRAVEL actualizado: %.0f-%.0f%s\n", start, end, wraps ? " (wrap)" : "");
     } else {
-      Serial.println("ERROR: Formato incorrecto. Use DEG_RAPIDO=start-end (ej: 180-355)");
+      Serial.println("ERROR: Formato incorrecto. Use DEG_TRAVEL=start-end (ej: 190-350)");
     }
     
   // ===== COMANDOS CONFIGURACION EEPROM =====

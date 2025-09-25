@@ -27,13 +27,16 @@ void applyConfigToProfiles() {
 }
 
 void selectSectorProfile(float deg) {
-  if (inSectorRange(deg, DEG_LENTO)) {
+  if (inSectorRange(deg, DEG_LENTO_UP)) {
     v_goal = PROF_SLOW.v_target; A_MAX = PROF_SLOW.a_max; J_MAX = PROF_SLOW.j_max;
   } else if (inSectorRange(deg, DEG_MEDIO)) {
     v_goal = PROF_MED.v_target;  A_MAX = PROF_MED.a_max;  J_MAX = PROF_MED.j_max;
-  } else if (inSectorRange(deg, DEG_RAPIDO)) {
+  } else if (inSectorRange(deg, DEG_LENTO_DOWN)) {
+    v_goal = PROF_SLOW.v_target; A_MAX = PROF_SLOW.a_max; J_MAX = PROF_SLOW.j_max;
+  } else if (inSectorRange(deg, DEG_TRAVEL)) {
     v_goal = PROF_FAST.v_target; A_MAX = PROF_FAST.a_max; J_MAX = PROF_FAST.j_max;
   } else {
+    // fallback seguro
     v_goal = PROF_SLOW.v_target; A_MAX = PROF_SLOW.a_max; J_MAX = PROF_SLOW.j_max;
   }
 }

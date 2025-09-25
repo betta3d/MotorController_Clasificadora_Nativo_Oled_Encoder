@@ -49,10 +49,11 @@ uint32_t lastBtnStartMs = 0;
 bool     ledVerdeBlinkState = false;
 uint32_t ledBlinkLastMs     = 0;
 
-// Sectores - Estructura simplificada
-SectorRange DEG_LENTO  = {355.0f, 10.0f, true};   // 355°-10° (tomar/soltar huevo)
-SectorRange DEG_MEDIO  = {10.0f, 180.0f, false};  // 10°-180° (transporte)
-SectorRange DEG_RAPIDO = {180.0f, 355.0f, false}; // 180°-355° (retorno vacío)
+// Sectores - 4 segmentos sobre 360° con 3 velocidades
+SectorRange DEG_LENTO_UP   = {350.0f, 10.0f, true};   // 350°-10° (wrap) — tomar huevo (Lento)
+SectorRange DEG_MEDIO      = {10.0f, 170.0f, false};  // 10°-170° — transporte (Medio)
+SectorRange DEG_LENTO_DOWN = {170.0f, 190.0f, false}; // 170°-190° — dejar huevo (Lento)
+SectorRange DEG_TRAVEL     = {190.0f, 350.0f, false}; // 190°-350° — retorno (Rápido)
 
 // Homing
 bool  HOMING_SEEK_DIR_CW   = true;
@@ -127,9 +128,10 @@ const char* stateName(SysState s) {
   return "?";
 }
 const char* sectorName(float deg) {
-  if (inSectorRange(deg, DEG_LENTO))  return "LENTO";
-  if (inSectorRange(deg, DEG_MEDIO))  return "MEDIO";  
-  if (inSectorRange(deg, DEG_RAPIDO)) return "RAPIDO";
+  if (inSectorRange(deg, DEG_LENTO_UP))   return "LENTO_UP";
+  if (inSectorRange(deg, DEG_MEDIO))      return "MEDIO";  
+  if (inSectorRange(deg, DEG_LENTO_DOWN)) return "LENTO_DOWN";
+  if (inSectorRange(deg, DEG_TRAVEL))     return "TRAVEL";
   return "-";
 }
 

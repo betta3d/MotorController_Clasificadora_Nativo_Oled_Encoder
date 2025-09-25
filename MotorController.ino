@@ -48,7 +48,7 @@ void setup() {
   logPrint("SYSTEM", "  STOP           - Detiene movimiento");
   logPrint("SYSTEM", "Configuracion (ejemplos):");
   logPrint("SYSTEM", "  V_SLOW=5.0 | V_MED=10.0 | V_FAST=15.0 | ACCEL=50.0");
-  logPrint("SYSTEM", "  DEG_LENTO=355-10 | DEG_MEDIO=10-180 | DEG_RAPIDO=180-355");
+  logPrint("SYSTEM", "  DEG_LENTO_UP=350-10 | DEG_MEDIO=10-170 | DEG_LENTO_DOWN=170-190 | DEG_TRAVEL=190-350");
   logPrint("SYSTEM", "  MICROSTEPPING=16 | GEAR_RATIO=1.0");
   logPrint("SYSTEM", "Use STATUS para ver TODOS los parametros y comandos disponibles.");
   logPrint("SYSTEM", "Use LOG-STATUS para ver control de logging.");
