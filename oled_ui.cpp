@@ -2,6 +2,7 @@
 #include "globals.h"
 #include "motion.h"
 #include "eeprom_store.h"
+#include "logger.h"
 
 namespace App {
 
@@ -216,7 +217,7 @@ static void doMenuAction(uint8_t id) {
   switch(id) {
     case MI_START:
       if (!homed) {
-        Serial.println("[UI] Homing no realizado. Mostrando dialogo.");
+        logPrint("UI", "Homing no realizado. Mostrando dialogo.");
         confirmIndex = 0; // Default to "No"
         uiScreen = UiScreen::CONFIRM_HOME;
         break;
@@ -229,9 +230,9 @@ static void doMenuAction(uint8_t id) {
         uiScreen = UiScreen::STATUS;
         screensaverActive = false; // Ensure screensaver is off initially
         screensaverStartTime = millis(); // Start screensaver timer
-        Serial.println("[UI] RUNNING iniciado.");
+        logPrint("UI", "RUNNING iniciado.");
       } else {
-        Serial.println("[UI] No se puede iniciar en este estado.\n");
+        logPrint("WARNING", "No se puede iniciar en este estado.");
       }
       break;
 
@@ -239,9 +240,9 @@ static void doMenuAction(uint8_t id) {
       if (state != SysState::RUNNING) {
         startHoming();
         uiScreen = UiScreen::STATUS;
-        Serial.println("[UI] Homing iniciado.\n");
+        logPrint("HOME", "Homing iniciado.");
       } else {
-        Serial.println("[UI] No se puede hacer HOME en RUNNING.\n");
+        logPrint("WARNING", "No se puede hacer HOME en RUNNING.");
       }
       break;
 
@@ -254,7 +255,7 @@ static void doMenuAction(uint8_t id) {
 
     case MI_SAVE:
       saveConfig(); applyConfigToProfiles();
-      Serial.println("[UI] Config guardada.\n");
+      logPrint("CONFIG", "Config guardada.");
       break;
 
     case MI_DEFAULTS:

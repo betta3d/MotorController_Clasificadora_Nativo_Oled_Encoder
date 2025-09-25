@@ -52,6 +52,43 @@ STOP            # Detener movimiento
 SCURVE=ON/OFF   # Habilitar/deshabilitar curvas S
 ```
 
+### Sistema de Logging Avanzado
+```bash
+# Control por categorías (ON/OFF)
+LOG-SYSTEM=ON       # Logs del sistema (arranque, configuración)
+LOG-HOME=OFF        # Logs de proceso homing
+LOG-ROTAR=ON        # Logs de rotaciones y movimiento
+LOG-START_STOP=ON   # Logs de comandos START/STOP
+LOG-TELEMETRIA=OFF  # Datos de posición y sensores
+LOG-DEBUG=OFF       # Información de depuración
+LOG-CONFIG=ON       # Cambios de configuración
+LOG-ERROR=ON        # Mensajes de error
+LOG-UI=OFF          # Interacción con OLED/encoder
+LOG-RUN=ON          # Operación de perfiles automáticos
+LOG-WARNING=ON      # Advertencias del sistema
+LOG-CALIBRACION=ON  # Procesos de calibración
+LOG-ALL=ON          # Control maestro (anula otros)
+
+# Ver estado actual
+LOG-STATUS          # Mostrar estado de todas las categorías
+```
+
+**🔍 Categorías de Logging:**
+- **SYSTEM**: Arranque, inicialización, configuración general
+- **HOME**: Proceso completo de homing con sensor óptico
+- **ROTAR**: Movimientos de rotación, cálculos de pasos
+- **START_STOP**: Comandos de inicio y parada
+- **TELEMETRIA**: Datos de posición, velocidad, sensores (verbose)
+- **DEBUG**: Información técnica de depuración (verbose)
+- **CONFIG**: Cambios de parámetros y validación
+- **ERROR**: Errores críticos y validaciones fallidas
+- **UI**: Interacciones con OLED, encoder, botones
+- **RUN**: Ejecución de perfiles automáticos por sectores
+- **WARNING**: Advertencias no críticas
+- **CALIBRACION**: Procesos de calibración y ajuste
+- **ALL**: Control maestro - ON habilita todo, OFF deshabilita todo
+
+
 ### Configuración Velocidades
 ```bash
 V_SLOW=5.0      # Velocidad lenta (cm/s)
@@ -158,9 +195,34 @@ DEG_RAPIDO=170-350          # Retorno 180°
 - Ajustar `HOMING_SEEK_VEL` más lenta
 - Cambiar `HOMING_SEEK_DIR` si busca dirección incorrecta
 
-## 📊 Monitoreo Debug
+## 📊 Monitoreo y Debug
 
-El sistema incluye telemetría automática:
+### Ejemplos de Uso del Logging
+```bash
+# Debugging inicial - ver solo errores y sistema
+LOG-ALL=OFF
+LOG-ERROR=ON
+LOG-SYSTEM=ON
+
+# Debugging rotación - ver cálculos de movimiento  
+LOG-ROTAR=ON
+LOG-DEBUG=ON
+ROTAR=2.5
+
+# Debugging homing completo
+LOG-HOME=ON
+LOG-TELEMETRIA=ON
+
+# Producción silenciosa - solo errores críticos
+LOG-ALL=OFF
+LOG-ERROR=ON
+
+# Desarrollo completo - todo visible
+LOG-ALL=ON
+```
+
+### Telemetría Automática
+El sistema incluye telemetría automática que se muestra cuando `LOG-TELEMETRIA=ON`:
 ```
 STATE=RUNNING | HOMED=1 | S-CURVE=ON | v=1200.0 | v_goal=800.0 | sector=MEDIO
 ```

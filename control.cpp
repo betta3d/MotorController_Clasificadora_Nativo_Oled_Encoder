@@ -2,6 +2,7 @@
 #include "globals.h"
 #include "motion.h"
 #include "pins.h"
+#include "logger.h"
 #include <Arduino.h>
 #include <esp_timer.h>
 
@@ -27,9 +28,10 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
       
       // DEBUG: Mostrar estado cada 100 ticks (0.1 segundos)
       static uint32_t debugCounter = 0;
-      if (++debugCounter % 100 == 0) {
-        Serial.printf("[DEBUG] ROTATING: deg=%.1f, v_goal=%.1f, A_MAX=%.1f, sector=%s\n", 
-                     deg, v_goal, A_MAX, sectorName(deg));
+      debugCounter++;
+      if (debugCounter % 100 == 0) { // Cada 100ms
+        logPrintf("DEBUG", "ROTATING: deg=%.1f, v_goal=%.1f, A_MAX=%.1f, sector=%s", 
+                 currentAngleDeg(), v_goal, A_MAX, sectorName(currentAngleDeg()));
       }
     } break;
 
@@ -164,21 +166,21 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
     
     if (totalAngleRotated >= nextAngleMark && nextAngleMark != lastDebugAngle) {
       float progress = totalAngleRotated / 720.0f * 100.0f; // 720° = 2 vueltas
-      Serial.printf("[DEBUG] %.0f° | Pos: %.1f° | Pasos: %ld/6400 | Progreso: %.1f%%\n", 
-                   totalAngleRotated, currentAngle, (long)abs(rotateStepsCounter), progress);
+      logPrintf("DEBUG", "%.0f° | Pos: %.1f° | Pasos: %ld/6400 | Progreso: %.1f%%", 
+               totalAngleRotated, currentAngle, (long)abs(rotateStepsCounter), progress);
       lastDebugAngle = nextAngleMark;
     }
     
     if (completed) {
       float completedRevs = (float)completedSteps / (float)stepsPerRev;
       float totalDegreesRotated = (float)completedSteps * degPerStep();
-      Serial.printf("[ROTAR] Completado: %.2f vueltas (%.1f°) - %ld pasos\n", 
-                   completedRevs, totalDegreesRotated, (long)completedSteps);
+      logPrintf("ROTAR", "Completado: %.2f vueltas (%.1f°) - %ld pasos", 
+               completedRevs, totalDegreesRotated, (long)completedSteps);
       
       // Verificación final: ¿Realmente completamos 720°?
       if (abs(totalDegreesRotated - 720.0f) > 1.0f) {
-        Serial.printf("[WARNING] Esperados 720°, completados %.1f° - Diferencia: %.1f°\n", 
-                     totalDegreesRotated, totalDegreesRotated - 720.0f);
+        logPrintf("WARNING", "Esperados 720°, completados %.1f° - Diferencia: %.1f°", 
+                 totalDegreesRotated, totalDegreesRotated - 720.0f);
       }
       
       state = SysState::STOPPING;

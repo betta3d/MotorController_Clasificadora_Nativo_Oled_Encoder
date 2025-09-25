@@ -1,5 +1,6 @@
 #include "motion.h"
 #include "globals.h"
+#include "logger.h"
 
 namespace App {
 
@@ -19,10 +20,10 @@ void applyConfigToProfiles() {
   setProfile(PROF_FAST, Cfg.v_fast_cmps, Cfg.accel_cmps2, Cfg.jerk_cmps3);
   
   // DEBUG: Mostrar perfiles calculados
-  Serial.printf("[DEBUG] Perfiles aplicados:\n");
-  Serial.printf("  SLOW: v=%.1f pps, a=%.1f pps², j=%.1f pps³\n", PROF_SLOW.v_target, PROF_SLOW.a_max, PROF_SLOW.j_max);
-  Serial.printf("  MED:  v=%.1f pps, a=%.1f pps², j=%.1f pps³\n", PROF_MED.v_target, PROF_MED.a_max, PROF_MED.j_max);
-  Serial.printf("  FAST: v=%.1f pps, a=%.1f pps², j=%.1f pps³\n", PROF_FAST.v_target, PROF_FAST.a_max, PROF_FAST.j_max);
+  logPrint("DEBUG", "Perfiles aplicados:");
+  logPrintf("DEBUG", "  SLOW: v=%.1f pps, a=%.1f pps², j=%.1f pps³", PROF_SLOW.v_target, PROF_SLOW.a_max, PROF_SLOW.j_max);
+  logPrintf("DEBUG", "  MED:  v=%.1f pps, a=%.1f pps², j=%.1f pps³", PROF_MED.v_target, PROF_MED.a_max, PROF_MED.j_max);
+  logPrintf("DEBUG", "  FAST: v=%.1f pps, a=%.1f pps², j=%.1f pps³", PROF_FAST.v_target, PROF_FAST.a_max, PROF_FAST.j_max);
 }
 
 void selectSectorProfile(float deg) {

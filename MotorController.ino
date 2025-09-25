@@ -11,6 +11,7 @@
 #include "oled_ui.h"
 #include "control.h"
 #include "commands.h"
+#include "logger.h"
 
 using namespace App;
 
@@ -35,18 +36,22 @@ void setup() {
   state = SysState::UNHOMED; homed = false;
   uiScreen = UiScreen::STATUS;
 
-  Serial.println("\nESP32 + TB6600 — Proyecto modular listo.");
-  Serial.println("Seguridad: no inicia RUNNING hasta completar HOME.");
-  Serial.println("\nComandos seriales principales:");
-  Serial.println("  STATUS         - Muestra configuracion completa con ejemplos");
-  Serial.println("  SCURVE=ON/OFF  - Habilita/deshabilita curvas S");
-  Serial.println("  ROTAR=N        - Rota N vueltas (+ CW, - CCW)");
-  Serial.println("  STOP           - Detiene movimiento");
-  Serial.println("\nConfiguracion (ejemplos):");
-  Serial.println("  V_SLOW=5.0 | V_MED=10.0 | V_FAST=15.0 | ACCEL=50.0");
-  Serial.println("  DEG_LENTO=355-10 | DEG_MEDIO=10-180 | DEG_RAPIDO=180-355");
-  Serial.println("  MICROSTEPPING=16 | GEAR_RATIO=1.0");
-  Serial.println("\nUse STATUS para ver TODOS los parametros y comandos disponibles.");
+  // Inicializar sistema de logging
+  initLogging();
+  
+  logPrint("SYSTEM", "ESP32 + TB6600 — Proyecto modular listo.");
+  logPrint("SYSTEM", "Seguridad: no inicia RUNNING hasta completar HOME.");
+  logPrint("SYSTEM", "Comandos seriales principales:");
+  logPrint("SYSTEM", "  STATUS         - Muestra configuracion completa con ejemplos");
+  logPrint("SYSTEM", "  SCURVE=ON/OFF  - Habilita/deshabilita curvas S");
+  logPrint("SYSTEM", "  ROTAR=N        - Rota N vueltas (+ CW, - CCW)");
+  logPrint("SYSTEM", "  STOP           - Detiene movimiento");
+  logPrint("SYSTEM", "Configuracion (ejemplos):");
+  logPrint("SYSTEM", "  V_SLOW=5.0 | V_MED=10.0 | V_FAST=15.0 | ACCEL=50.0");
+  logPrint("SYSTEM", "  DEG_LENTO=355-10 | DEG_MEDIO=10-180 | DEG_RAPIDO=180-355");
+  logPrint("SYSTEM", "  MICROSTEPPING=16 | GEAR_RATIO=1.0");
+  logPrint("SYSTEM", "Use STATUS para ver TODOS los parametros y comandos disponibles.");
+  logPrint("SYSTEM", "Use LOG-STATUS para ver control de logging.");
 }
 
 void loop() {
@@ -57,7 +62,7 @@ void loop() {
     lastBtnHomeMs = now;
     if (state != SysState::RUNNING) {
       startHoming();
-      Serial.println("[HOME] Iniciando homing (fisico)...");
+      logPrint("HOME", "Iniciando homing (fisico)...");
     }
   }
 
@@ -66,16 +71,16 @@ void loop() {
     lastBtnStartMs = now;
     if (state == SysState::RUNNING) {
       state = SysState::STOPPING;
-      Serial.println("[START/STOP] Deteniendo con rampa...");
+      logPrint("START_STOP", "Deteniendo con rampa...");
     } else {
       if (!homed) {
-        Serial.println("[START/STOP] BLOQUEADO: haga HOME primero.");
+        logPrint("START_STOP", "BLOQUEADO: haga HOME primero.");
       } else if (state == SysState::READY) {
         v_goal = 0.0f; a = 0.0f;
         revStartModSteps = modSteps();
         ledVerdeBlinkState = false; ledBlinkLastMs = now;
         state = SysState::RUNNING;
-        Serial.println("[START/STOP] RUNNING: sectores activos.");
+        logPrint("START_STOP", "RUNNING: sectores activos.");
         uiScreen = UiScreen::STATUS;
         screensaverActive = false; // Ensure screensaver is off initially
         screensaverStartTime = now; // Start screensaver timer
@@ -86,30 +91,30 @@ void loop() {
   // FSM alto nivel
   switch (state) {
     case SysState::HOMING_SEEK:
-      if (optActive()) { homingStepCounter = 0; state = SysState::HOMING_BACKOFF; Serial.println("[HOME] Sensor detectado. Backoff..."); }
-      else if (homingStepCounter > HOMING_TIMEOUT_STEPS) { state = SysState::FAULT; Serial.println("[HOME] TIMEOUT SEEK."); }
+      if (optActive()) { homingStepCounter = 0; state = SysState::HOMING_BACKOFF; logPrint("HOME", "Sensor detectado. Backoff..."); }
+      else if (homingStepCounter > HOMING_TIMEOUT_STEPS) { state = SysState::FAULT; logPrint("ERROR", "TIMEOUT SEEK."); }
       break;
 
     case SysState::HOMING_BACKOFF: {
       uint32_t backoffSteps = (uint32_t)(HOMING_BACKOFF_DEG / degPerStep());
       if (homingStepCounter >= backoffSteps) {
-        homingStepCounter = 0; state = SysState::HOMING_REAPP; Serial.println("[HOME] Backoff OK. Re-approach lento...");
+        homingStepCounter = 0; state = SysState::HOMING_REAPP; logPrint("HOME", "Backoff OK. Re-approach lento...");
       }
     } break;
 
     case SysState::HOMING_REAPP:
-      if (optActive()) { v_goal = 0.0f; delay(50); setZeroHere(); state = SysState::READY; Serial.println("[HOME] CERO fijado. READY."); }
+      if (optActive()) { v_goal = 0.0f; delay(50); setZeroHere(); state = SysState::READY; logPrint("HOME", "CERO fijado. READY."); }
       else if (homingStepCounter > HOMING_TIMEOUT_STEPS) {
         state = SysState::FAULT;
         v = 0.0f; // Reset velocity immediately
         a = 0.0f; // Reset acceleration immediately
-        Serial.println("[HOME] TIMEOUT REAPP.");
+        logPrint("ERROR", "TIMEOUT REAPP.");
       }
       break;
 
     case SysState::RUNNING:
       if (RUN_MODE == RunMode::ONE_REV && v_goal <= 0.0f) {
-        state = SysState::STOPPING; Serial.println("[RUN] 1 vuelta completa. Parando...");
+        state = SysState::STOPPING; logPrint("RUN", "1 vuelta completa. Parando...");
       }
       break;
 
@@ -119,7 +124,7 @@ void loop() {
 
     case SysState::STOPPING:
       if (v >= 1.0f) v_goal = 0.0f;
-      else { state = SysState::READY; Serial.println("[STOP] Motor detenido. READY."); }
+      else { state = SysState::READY; logPrint("RUN", "Motor detenido. READY."); }
       break;
 
     default: break;
@@ -134,7 +139,7 @@ void loop() {
   if (millis() - lastDebugPrintMs > 100) { // Imprime cada 100ms si hay evento
     lastDebugPrintMs = millis();
     if (d != 0 || click) {
-      Serial.printf("--> ENCODER EVENT | Delta: %d, Click: %s\n", d, click ? "true" : "false");
+      logPrintf("DEBUG", "ENCODER EVENT | Delta: %d, Click: %s", d, click ? "true" : "false");
     }
   }
   // ===== FIN DEBUG =====
@@ -152,7 +157,7 @@ void loop() {
     float ang = currentAngleDeg();
     float steps_per_cm = (Cfg.cm_per_rev > 0.0f) ? ((float)stepsPerRev / Cfg.cm_per_rev) : 0.0f;
     float v_cmps = (steps_per_cm > 0.0f) ? (v / steps_per_cm) : 0.0f;
-    Serial.printf("STATE=%s | HOMED=%d | OPT_ACTIVE=%d | S-CURVE=%s | v=%.1f | a=%.1f | v_goal=%.1f | A_MAX=%.1f | J_MAX=%.1f | v_cmps=%.1f\n",
-                  stateName(state), homed ? 1 : 0, optActive() ? 1 : 0, Cfg.enable_s_curve ? "ON" : "OFF", v, a, v_goal, A_MAX, J_MAX, v_cmps);
+    logPrintf("TELEMETRIA", "STATE=%s | HOMED=%d | OPT_ACTIVE=%d | S-CURVE=%s | v=%.1f | a=%.1f | v_goal=%.1f | A_MAX=%.1f | J_MAX=%.1f | v_cmps=%.1f",
+              stateName(state), homed ? 1 : 0, optActive() ? 1 : 0, Cfg.enable_s_curve ? "ON" : "OFF", v, a, v_goal, A_MAX, J_MAX, v_cmps);
   }
 }

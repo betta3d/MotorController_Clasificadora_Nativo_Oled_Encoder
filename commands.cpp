@@ -5,6 +5,7 @@
 #include "motion.h"
 #include "eeprom_store.h"
 #include "oled_ui.h"
+#include "logger.h"
 
 using namespace App;
 
@@ -50,12 +51,12 @@ void processCommands() {
   if (upperLine.equals("SCURVE=ON")) {
     Cfg.enable_s_curve = true;
     saveConfig(); // Guardar en EEPROM
-    Serial.println("S-CURVE=ON (rampas suaves habilitadas)");
+    logPrint("CONFIG", "S-CURVE=ON (rampas suaves habilitadas)");
     
   } else if (upperLine.equals("SCURVE=OFF")) {
     Cfg.enable_s_curve = false;
     saveConfig(); // Guardar en EEPROM
-    Serial.println("S-CURVE=OFF (control directo de velocidad)");
+    logPrint("CONFIG", "S-CURVE=OFF (control directo de velocidad)");
     
   } else if (upperLine.startsWith("ROTAR=")) {
     value = upperLine.substring(6).toFloat();
@@ -63,7 +64,7 @@ void processCommands() {
       // Si está en RUNNING, primero detener
       if (state == SysState::RUNNING) {
         state = SysState::STOPPING;
-        Serial.println("[ROTAR] Deteniendo RUNNING primero...");
+        logPrint("ROTAR", "Deteniendo RUNNING primero...");
         // Esperar un momento para que se detenga
         delay(100);
       }
@@ -77,17 +78,17 @@ void processCommands() {
       rotateMode = true;
       
       // DEBUG: Mostrar valores de cálculo
-      Serial.printf("[DEBUG] ROTAR iniciado - revisa físicamente y usa STOP cuando complete las vueltas reales\n");
-      Serial.printf("[DEBUG] stepsPerRev=%lu, value=%.1f, rotateTargetSteps=%ld\n", 
-                   stepsPerRev, value, (long)rotateTargetSteps);
-      Serial.printf("[DEBUG] Observa cuándo complete %.1f vueltas físicas y usa STOP\n", value);
+      logPrint("DEBUG", "ROTAR iniciado - revisa físicamente y usa STOP cuando complete las vueltas reales");
+      logPrintf("DEBUG", "stepsPerRev=%lu, value=%.1f, rotateTargetSteps=%ld", 
+               stepsPerRev, value, (long)rotateTargetSteps);
+      logPrintf("DEBUG", "Observa cuándo complete %.1f vueltas físicas y usa STOP", value);
       
       // ROTAR funciona sin HOME: setear temporalmente homed=true
       // Considerar posición actual como referencia (ángulo 0)
       if (!homed) {
         homed = true;
         totalSteps = 0; // Resetear posición actual como origen
-        Serial.println("[ROTAR] Posicion actual establecida como referencia (0°)");
+        logPrint("ROTAR", "Posicion actual establecida como referencia (0°)");
       }
       
       // Iniciar rotación
@@ -101,7 +102,7 @@ void processCommands() {
       Serial.printf("[ROTAR] Iniciando %.1f vueltas (%s) - %ld pasos objetivo\n", 
                    value, (value > 0) ? "CW" : "CCW", (long)rotateTargetSteps);
     } else {
-      Serial.println("ERROR: ROTAR requiere valor diferente de 0");
+      logPrint("ERROR", "ROTAR requiere valor diferente de 0");
     }
     
   } else if (upperLine.equals("STOP")) {
@@ -237,7 +238,7 @@ void processCommands() {
       applyConfigToProfiles(); // Aplicar cambios a perfiles de movimiento
       Serial.printf("CM_PER_REV actualizado: %.2f cm/rev\n", value);
     } else {
-      Serial.println("ERROR: CM_PER_REV debe ser > 0");
+      logPrint("ERROR", "CM_PER_REV debe ser > 0");
     }
     
   } else if (upperLine.startsWith("V_SLOW=")) {
@@ -304,7 +305,7 @@ void processCommands() {
       HOMING_TIMEOUT_STEPS = 5 * stepsPerRev;
       Serial.printf("MOTOR_STEPS actualizado: %lu steps/rev\n", value);
     } else {
-      Serial.println("ERROR: MOTOR_STEPS debe ser > 0");
+      logPrint("ERROR", "MOTOR_STEPS debe ser > 0");
     }
     
   } else if (upperLine.startsWith("MICROSTEPPING=")) {
@@ -400,15 +401,47 @@ void processCommands() {
     float value = upperLine.substring(15).toFloat();
     if (value >= 0) {
       HOMING_BACKOFF_DEG = value;
-      Serial.printf("HOMING_BACKOFF actualizado: %.1f°\n", value);
+      logPrintf("CONFIG", "HOMING_BACKOFF actualizado: %.1f°", value);
     } else {
-      Serial.println("ERROR: HOMING_BACKOFF debe ser >= 0");
+      logPrint("ERROR", "HOMING_BACKOFF debe ser >= 0");
     }
+    
+  // ===== COMANDOS LOG CONTROL =====
+  } else if (upperLine.startsWith("LOG-") && upperLine.indexOf("=") > 0) {
+    // Formato: LOG-CATEGORIA=ON/OFF
+    int dashPos = upperLine.indexOf('-');
+    int equalPos = upperLine.indexOf('=');
+    
+    if (dashPos > 0 && equalPos > dashPos) {
+      String category = upperLine.substring(dashPos + 1, equalPos);
+      String value = upperLine.substring(equalPos + 1);
+      
+      if (value == "ON") {
+        if (setLogEnabled(category, true)) {
+          logPrintf("CONFIG", "LOG-%s habilitado", category.c_str());
+        } else {
+          logPrintf("ERROR", "Categoría LOG-%s desconocida", category.c_str());
+        }
+      } else if (value == "OFF") {
+        if (setLogEnabled(category, false)) {
+          logPrintf("CONFIG", "LOG-%s deshabilitado", category.c_str());
+        } else {
+          logPrintf("ERROR", "Categoría LOG-%s desconocida", category.c_str());
+        }
+      } else {
+        logPrint("ERROR", "Use LOG-CATEGORIA=ON o LOG-CATEGORIA=OFF");
+      }
+    } else {
+      logPrint("ERROR", "Formato incorrecto. Use LOG-CATEGORIA=ON/OFF");
+    }
+    
+  } else if (upperLine.equals("LOG-STATUS")) {
+    showLogStatus();
   }
   
   // Si llegamos aquí y no se procesó ningún comando, mostrar error
   else if (line.length() > 0) {
-    Serial.printf("ERROR: Comando desconocido: %s\n", line.c_str());
-    Serial.println("Use STATUS para ver todos los comandos disponibles");
+    logPrintf("ERROR", "Comando desconocido: %s", line.c_str());
+    logPrint("ERROR", "Use STATUS para ver todos los comandos disponibles");
   }
 }
