@@ -3,6 +3,7 @@
 #include "motion.h"
 #include "eeprom_store.h"
 #include "logger.h"
+#include "homing.h"
 
 namespace App {
 
@@ -238,9 +239,9 @@ static void doMenuAction(uint8_t id) {
 
     case MI_HOME:
       if (state != SysState::RUNNING) {
-        startHoming();
+        App::startCentralizedHoming();
         uiScreen = UiScreen::STATUS;
-        logPrint("HOME", "Homing iniciado.");
+        logPrint("HOME", "Homing centralizado iniciado.");
       } else {
         logPrint("WARNING", "No se puede hacer HOME en RUNNING.");
       }
@@ -330,7 +331,7 @@ void uiProcess(int8_t encDelta, bool encClick) {
       }
       if (encClick) {
         if (confirmIndex == 1) { // "Si" was selected
-          startHoming();
+          App::startCentralizedHoming();
           uiScreen = UiScreen::STATUS;
         } else { // "No" was selected
           uiScreen = UiScreen::MENU;

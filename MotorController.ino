@@ -11,7 +11,9 @@
 #include "oled_ui.h"
 #include "control.h"
 #include "commands.h"
+#include "commands_control.h"
 #include "logger.h"
+#include "homing.h"
 
 using namespace App;
 
@@ -21,9 +23,9 @@ void setup() {
 
   EEPROM.begin(512);
   if (!loadConfig()) { setDefaults(); saveConfig(); }
+  // stepsPerRev y perfiles ya quedan consistentes por loadConfig(); recalculamos por seguridad
   stepsPerRev = (uint32_t)(MOTOR_FULL_STEPS_PER_REV * MICROSTEPPING * GEAR_RATIO);
   applyConfigToProfiles();
-  HOMING_TIMEOUT_STEPS = 5 * stepsPerRev;
 
   ioInit();           // pines, I2C y LEDs
   encoderInit();      // encoder por ISR
@@ -31,7 +33,7 @@ void setup() {
   controlStart();     // esp_timer 1 kHz
 
   digitalWrite(PIN_STEP, LOW);
-  setDirection(true);
+  setDirection(true); // Inicializar usando dirección maestra configurada
   totalSteps = 0; v = 0.0f; a = 0.0f; v_goal = 0.0f;
   state = SysState::UNHOMED; homed = false;
   uiScreen = UiScreen::STATUS;
@@ -61,8 +63,8 @@ void loop() {
   if (btnHomePhys() && (now - lastBtnHomeMs > DEBOUNCE_MS)) {
     lastBtnHomeMs = now;
     if (state != SysState::RUNNING) {
-      startHoming();
-      logPrint("HOME", "Iniciando homing (fisico)...");
+      App::startCentralizedHoming();
+      logPrint("HOME", "Iniciando homing centralizado (fisico)...");
     }
   }
 
@@ -90,28 +92,6 @@ void loop() {
 
   // FSM alto nivel
   switch (state) {
-    case SysState::HOMING_SEEK:
-      if (optActive()) { homingStepCounter = 0; state = SysState::HOMING_BACKOFF; logPrint("HOME", "Sensor detectado. Backoff..."); }
-      else if (homingStepCounter > HOMING_TIMEOUT_STEPS) { state = SysState::FAULT; logPrint("ERROR", "TIMEOUT SEEK."); }
-      break;
-
-    case SysState::HOMING_BACKOFF: {
-      uint32_t backoffSteps = (uint32_t)(HOMING_BACKOFF_DEG / degPerStep());
-      if (homingStepCounter >= backoffSteps) {
-        homingStepCounter = 0; state = SysState::HOMING_REAPP; logPrint("HOME", "Backoff OK. Re-approach lento...");
-      }
-    } break;
-
-    case SysState::HOMING_REAPP:
-      if (optActive()) { v_goal = 0.0f; delay(50); setZeroHere(); state = SysState::READY; logPrint("HOME", "CERO fijado. READY."); }
-      else if (homingStepCounter > HOMING_TIMEOUT_STEPS) {
-        state = SysState::FAULT;
-        v = 0.0f; // Reset velocity immediately
-        a = 0.0f; // Reset acceleration immediately
-        logPrint("ERROR", "TIMEOUT REAPP.");
-      }
-      break;
-
     case SysState::RUNNING:
       if (RUN_MODE == RunMode::ONE_REV && v_goal <= 0.0f) {
         state = SysState::STOPPING; logPrint("RUN", "1 vuelta completa. Parando...");
@@ -128,6 +108,26 @@ void loop() {
       break;
 
     default: break;
+  }
+
+  // ===== PROCESAMIENTO DE HOMING CENTRALIZADO =====
+  if (state == SysState::HOMING_SEEK) {
+    App::processCentralizedHoming();
+    
+    // Si homing se completó exitosamente, ejecutar rotación pendiente si la hay
+    if (App::centralizedHomingCompleted()) {
+      if (homed && App::homingCtx.phase == App::HomingPhase::DONE) {
+        // Homing exitoso - verificar si hay rotación pendiente
+        if (Comandos::ejecutarRotacionPendiente()) {
+          Serial.println("[MAIN] Iniciando rotación pendiente tras homing exitoso");
+        } else {
+          Serial.println("[MAIN] Homing completado, sin rotación pendiente");
+        }
+      } else if (App::homingCtx.phase == App::HomingPhase::FAULT) {
+        Serial.println("[MAIN] Homing falló, cancelando rotación pendiente");
+        pendingRotateRevs = 0.0f; // Cancelar rotación pendiente
+      }
+    }
   }
 
   // ===== UI con encoder (nuevo flujo centralizado en oled_ui.cpp) =====

@@ -16,23 +16,30 @@ static esp_timer_handle_t stepOffTimer = nullptr;  // Apaga el pulso tras STEP_P
 static void IRAM_ATTR stepOnTick(void* /*arg*/);
 static void IRAM_ATTR stepOffTick(void* /*arg*/);
 
+// Función encapsulada para movimiento por sectores
+static void applySectorBasedMovement(bool useMasterSelector) {
+  float deg = currentAngleDeg();
+  selectSectorProfile(deg);
+  
+  // Usar dirección específica recibida como parámetro
+  setDirection(useMasterSelector);
+}
+
 static void IRAM_ATTR controlTick(void* /*arg*/) {
   const float dt    = (float)CONTROL_DT_US * 1e-6f;
   const float dt_us = (float)CONTROL_DT_US;
 
   switch (state) {
     case SysState::RUNNING: {
-      // Modo normal por sectores
-      float deg = currentAngleDeg();
-      selectSectorProfile(deg);
-      setDirection(true); // CW
+      // Movimiento continuo por sectores hasta STOP o FAULT
+  applySectorBasedMovement(true);
     } break;
 
     case SysState::ROTATING: {
-      // Modo rotación N vueltas - con velocidades por ángulo como RUNNING
-      float deg = currentAngleDeg();
-      selectSectorProfile(deg);
-      setDirection(rotateDirection); // Mantener dirección de la rotación
+      // Movimiento por N vueltas específicas con misma lógica de sectores
+      // Usa la dirección según rotateDirection (true=positivo, false=negativo)
+  bool useMasterSel = rotateDirection ? true : false;
+  applySectorBasedMovement(useMasterSel);
       
       // DEBUG: Mostrar estado cada 100 ticks (0.1 segundos)
       static uint32_t debugCounter = 0;
@@ -43,20 +50,11 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
       }
     } break;
 
-    case SysState::HOMING_SEEK:
-      v_goal = HOMING_V_SEEK_PPS;  A_MAX = HOMING_A_SEEK_PPS2;  J_MAX = HOMING_J_SEEK_PPS3;
-      setDirection(HOMING_SEEK_DIR_CW);
+    case SysState::HOMING_SEEK: {
+      // Estado de homing: la dirección y v_goal son manejados por homing.cpp
+      // No necesitan configuración adicional aquí, solo permitir el movimiento
       break;
-
-    case SysState::HOMING_BACKOFF:
-      v_goal = HOMING_V_SEEK_PPS;  A_MAX = HOMING_A_SEEK_PPS2;  J_MAX = HOMING_J_SEEK_PPS3;
-      setDirection(!HOMING_SEEK_DIR_CW);
-      break;
-
-    case SysState::HOMING_REAPP:
-      v_goal = HOMING_V_REAPP_PPS; A_MAX = HOMING_A_REAPP_PPS2; J_MAX = HOMING_J_REAPP_PPS3;
-      setDirection(HOMING_SEEK_DIR_CW);
-      break;
+    }
 
     case SysState::FAULT:
       // Parada de emergencia: resetea inmediatamente la cinemática.
@@ -71,7 +69,8 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
   }
 
   // S-curve jerk-limited (condicional según configuración)
-  if (Cfg.enable_s_curve && (state != SysState::HOMING_SEEK && state != SysState::HOMING_BACKOFF && state != SysState::HOMING_REAPP)) {
+  // IMPORTANTE: Durante HOMING_SEEK forzamos control directo para evitar A_MAX/J_MAX=0
+  if (Cfg.enable_s_curve && state != SysState::HOMING_SEEK) {
     // S-curve habilitada (para RUNNING y ROTATING)
     float sign   = (v < v_goal) ? +1.0f : (v > v_goal ? -1.0f : 0.0f);
     float a_goal = sign * A_MAX;
@@ -121,15 +120,14 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
     if (completed) {
       float completedRevs = (float)completedSteps / (float)stepsPerRev;
       float totalDegreesRotated = (float)completedSteps * degPerStep();
+      float expectedDegrees = abs(rotateTargetSteps) * degPerStep();
       logPrintf("ROTAR", "Completado: %.2f vueltas (%.1f°) - %ld pasos", 
                completedRevs, totalDegreesRotated, (long)completedSteps);
-      
-      // Verificación final: ¿Realmente completamos 720°?
-      if (abs(totalDegreesRotated - 720.0f) > 1.0f) {
-        logPrintf("WARNING", "Esperados 720°, completados %.1f° - Diferencia: %.1f°", 
-                 totalDegreesRotated, totalDegreesRotated - 720.0f);
+      // Verificación final: ¿Realmente completamos el ángulo esperado?
+      if (abs(totalDegreesRotated - expectedDegrees) > 1.0f) {
+        logPrintf("WARNING", "Esperados %.1f°, completados %.1f° - Diferencia: %.1f°", 
+                 expectedDegrees, totalDegreesRotated, totalDegreesRotated - expectedDegrees);
       }
-      
       state = SysState::STOPPING;
       rotateMode = false;
       rotateStepsCounter = 0;
@@ -172,8 +170,7 @@ namespace App {
 
 static inline bool isMovingState() {
   return (state == SysState::RUNNING || state == SysState::ROTATING ||
-          state == SysState::HOMING_SEEK || state == SysState::HOMING_BACKOFF ||
-          state == SysState::HOMING_REAPP);
+          state == SysState::HOMING_SEEK);
 }
 
 static void IRAM_ATTR stepOffTick(void* /*arg*/) {
@@ -205,14 +202,14 @@ static void IRAM_ATTR stepOnTick(void* /*arg*/) {
 
     // Actualizar contadores de pasos y dirección
     uint32_t prevMod = modSteps();
-    if (dirCW) {
+    if (master_direction) {
       totalSteps++;
     } else {
       totalSteps--;
     }
 
     // Contadores específicos de modos
-    if (state == SysState::HOMING_SEEK || state == SysState::HOMING_BACKOFF || state == SysState::HOMING_REAPP) {
+    if (state == SysState::HOMING_SEEK) {
       homingStepCounter++;
     }
     if (state == SysState::ROTATING) {

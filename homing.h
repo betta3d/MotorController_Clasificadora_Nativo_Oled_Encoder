@@ -1,21 +1,28 @@
 #pragma once
 #include <Arduino.h>
+#include <cstdint>
 
 namespace App {
 
-// Variables para proceso homing avanzado (ROTAR)
-extern volatile int32_t rotarHomingStepsCounter;  // Contador de pasos en proceso homing
-extern volatile int32_t rotarHomingOffsetCounter; // Contador de pasos para offset
-extern volatile uint32_t rotarHomingStartTime;    // Tiempo inicio estabilización
-extern volatile bool rotarHomingFoundSensor;     // Flag cuando se encuentra sensor
+enum class HomingPhase : uint8_t {
+    SEEK = 0,
+    OFFSET = 1,
+    STABILIZE = 2,
+    DONE = 3,
+    FAULT = 4
+};
 
-// Funciones para homing avanzado de ROTAR
-void initRotarHoming();           // Inicializa proceso homing para ROTAR
-void processRotarHomingSeek();    // Procesa búsqueda del sensor
-void processRotarHomingOffset();  // Procesa aplicación del offset
-void processRotarHomingStabilize(); // Procesa tiempo de estabilización
-bool rotarHomingSeekCompleted();  // Verifica si completó búsqueda
-bool rotarHomingOffsetCompleted(); // Verifica si completó offset
-bool rotarHomingStabilizeCompleted(); // Verifica si completó estabilización
+struct HomingContext {
+    HomingPhase phase;
+    int64_t baselineSteps;
+    bool sensorFound;
+    uint32_t stabilizeStartMs;
+};
+
+extern HomingContext homingCtx;
+
+void startCentralizedHoming();
+void processCentralizedHoming();
+bool centralizedHomingCompleted();
 
 } // namespace App

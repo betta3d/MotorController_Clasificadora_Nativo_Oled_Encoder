@@ -1,3 +1,4 @@
+
 #include "globals.h"
 #include "pins.h"
 #include <Arduino.h>
@@ -14,6 +15,9 @@ volatile SysState state = SysState::UNHOMED;
 volatile bool     homed = false;
 RunMode RUN_MODE = RunMode::CONTINUOUS;
 
+// Rotación pendiente
+float pendingRotateRevs = 0.0f;
+
 esp_timer_handle_t controlTimer = nullptr;
 
 volatile uint64_t totalSteps = 0;
@@ -29,7 +33,8 @@ volatile bool  stepPinState = LOW;
 volatile uint32_t pulseHoldUs  = 0;
 volatile float    stepAccumulatorUs = 0.0f;
 
-volatile bool  dirCW = true;
+volatile bool  master_direction = true;  // CW por defecto (HIGH)
+volatile bool  inverse_direction = !master_direction; // CCW por defecto (LOW) - opuesto a master
 volatile uint64_t homingStepCounter = 0;
 
 uint32_t revStartModSteps = 0;
@@ -55,21 +60,10 @@ SectorRange DEG_MEDIO      = {10.0f, 170.0f, false};  // 10°-170° — transpor
 SectorRange DEG_LENTO_DOWN = {170.0f, 190.0f, false}; // 170°-190° — dejar huevo (Lento)
 SectorRange DEG_TRAVEL     = {190.0f, 350.0f, false}; // 190°-350° — retorno (Rápido)
 
-// Homing
-bool  HOMING_SEEK_DIR_CW   = true;
-float HOMING_V_SEEK_PPS    = 800.0f;
-float HOMING_A_SEEK_PPS2   = 3000.0f;
-float HOMING_J_SEEK_PPS3   = 20000.0f;
-float HOMING_V_REAPP_PPS   = 400.0f;
-float HOMING_A_REAPP_PPS2  = 2000.0f;
-float HOMING_J_REAPP_PPS3  = 15000.0f;
-float HOMING_BACKOFF_DEG   = 3.0f;
-uint32_t HOMING_TIMEOUT_STEPS = 0;
-
-// Homing avanzado defaults
+// Homing centralizado
 uint32_t TIEMPO_ESTABILIZACION_HOME = 2000; // 2 segundos
-float    DEG_OFFSET = 45.0f;                // 45 grados
-uint32_t MAX_STEPS_TO_FIND_SENSOR = 4800;   // 4800 pasos
+float  DEG_OFFSET = 45.0f;                // 45 grados
+// float V_HOME_CMPS = 3.0f; // cm/s - MOVIDO A homing.cpp
 
 // UI
 UiScreen uiScreen = UiScreen::STATUS;
@@ -85,7 +79,6 @@ uint8_t menuOrder[MI_COUNT] = {
 };
 
 // Constantes control
-const bool     DIR_CW_LEVEL        = HIGH;
 const uint32_t STEP_PULSE_WIDTH_US = 20;
 const uint32_t CONTROL_DT_US       = 1000;
 
@@ -108,7 +101,10 @@ bool inSectorRange(float deg, const SectorRange& sector) {
     return (deg >= sector.start && deg <= sector.end);
   }
 }
-void setDirection(bool cw){ digitalWrite(PIN_DIR, cw ? DIR_CW_LEVEL : !DIR_CW_LEVEL); dirCW = cw; }
+void setDirection(bool useMasterDir){
+  bool dir = useMasterDir ? master_direction : inverse_direction;
+  digitalWrite(PIN_DIR, dir ? HIGH : LOW);  // master_direction=true → HIGH (CW), false → LOW (CCW)
+}
 bool optActive(){ return digitalRead(PIN_OPT_HOME) == HIGH; }
 bool btnHomePhys(){ return digitalRead(PIN_BTN_HOME) == LOW; }
 bool btnStartPhys(){ return digitalRead(PIN_BTN_START) == LOW; }
@@ -117,8 +113,6 @@ const char* stateName(SysState s) {
   switch (s) {
     case SysState::UNHOMED:        return "UNHOMED";
     case SysState::HOMING_SEEK:    return "HOMING SEEK";
-    case SysState::HOMING_BACKOFF: return "HOMING BACK";
-    case SysState::HOMING_REAPP:   return "HOMING REAPP";
     case SysState::READY:          return "READY";
     case SysState::RUNNING:        return "RUNNING";
     case SysState::ROTATING:       return "ROTATING";
@@ -138,9 +132,7 @@ const char* sectorName(float deg) {
 bool isMotorMoving() {
   return (state == SysState::RUNNING ||
           state == SysState::ROTATING ||
-          state == SysState::HOMING_SEEK ||
-          state == SysState::HOMING_BACKOFF ||
-          state == SysState::HOMING_REAPP);
+          state == SysState::HOMING_SEEK);
 }
 
 void setZeroHere(){ totalSteps = 0; homed = true; }

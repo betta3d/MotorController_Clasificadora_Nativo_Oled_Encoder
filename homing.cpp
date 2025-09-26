@@ -1,113 +1,146 @@
 #include "homing.h"
+#include <cstdint>
+#include <cstdlib>
 #include "globals.h"
 #include "logger.h"
 
+// Variable específica de homing
+float V_HOME_CMPS = 3.0f; // cm/s por defecto
+
 namespace App {
 
-// Variables para proceso homing avanzado (ROTAR)
-volatile int32_t rotarHomingStepsCounter = 0;
-volatile int32_t rotarHomingOffsetCounter = 0;
-volatile uint32_t rotarHomingStartTime = 0;
-volatile bool rotarHomingFoundSensor = false;
+HomingContext homingCtx = {HomingPhase::SEEK, 0, false, 0};
 
-void initRotarHoming() {
-  rotarHomingStepsCounter = 0;
-  rotarHomingOffsetCounter = 0;
-  rotarHomingFoundSensor = false;
-  rotarHomingStartTime = 0;
+void startCentralizedHoming() {
+  // Reset completo del contexto de homing
+  homingCtx.phase = HomingPhase::SEEK;
+  homingCtx.baselineSteps = totalSteps;
+  homingCtx.sensorFound = false;
+  homingCtx.stabilizeStartMs = 0;
   
-  // NOTA: Las variables v_goal, A_MAX, J_MAX se configuran en control.cpp ISR
-  // No las configuramos aquí para evitar conflictos
+  // Reset de variables que pueden interferir con homing
+  homed = false;
+  homingStepCounter = 0;
+  v = 0.0f;        // Reset velocidad actual
+  a = 0.0f;        // Reset aceleración actual
+  v_goal = 0.0f;   // Reset velocidad objetivo inicial
   
-  // Dirección CCW para buscar sensor
-  setDirection(false); // CCW
+  // Reset de modo rotación que puede interferir
+  rotateMode = false;
+  rotateStepsCounter = 0;
+  // NO limpiar pendingRotateRevs aquí: puede contener una rotación solicitada
+  // que debe ejecutarse al finalizar el homing. Se consumirá más tarde si procede.
   
-  logPrint("HOME", "ROTAR: Iniciando búsqueda de sensor óptico (CCW)");
-  logPrintf("HOME", "Máximo %.1f vueltas para encontrar sensor", 
-           MAX_STEPS_TO_FIND_SENSOR / (float)stepsPerRev);
+  // Configurar dirección para buscar sensor
+  setDirection(false); // Buscar sensor usando dirección inversa a la maestra
+  
+  // Calcular velocidad de homing en pasos/s desde V_HOME_CMPS
+  float steps_per_cm = (Cfg.cm_per_rev > 0.0f) ? ((float)stepsPerRev / Cfg.cm_per_rev) : 0.0f;
+  v_goal = V_HOME_CMPS * steps_per_cm; // Usar V_HOME_CMPS
+  
+  // Establecer estado del sistema
+  state = SysState::HOMING_SEEK; // Estado global para movimiento
+  
+  logPrint("HOME", "Inicio homing centralizado - buscando sensor en inverse_direction");
 }
 
-void processRotarHomingSeek() {
-  // Verificar si encontró el sensor
-  if (optActive() && !rotarHomingFoundSensor) {
-    rotarHomingFoundSensor = true;
-    logPrintf("HOME", "ROTAR: Sensor encontrado después de %ld pasos (%.2f vueltas)", 
-             rotarHomingStepsCounter, rotarHomingStepsCounter / (float)stepsPerRev);
-    return;
-  }
-  
-  // El contador se incrementa automáticamente en el ISR de control.cpp
-  // Solo verificar timeout - si da más vueltas de las configuradas sin encontrar sensor
-  if (rotarHomingStepsCounter >= (int32_t)MAX_STEPS_TO_FIND_SENSOR) {
-    logPrintf("ERROR", "ROTAR: Sensor no encontrado después de %.1f vueltas - FAULT",
-             MAX_STEPS_TO_FIND_SENSOR / (float)stepsPerRev);
-    state = SysState::FAULT;
+void processCentralizedHoming() {
+  switch (homingCtx.phase) {
+    case HomingPhase::SEEK: {
+      // Debouncing simple: requiere 3 lecturas consecutivas
+      static int sensorCount = 3;
+      // Calcular velocidad de homing en pasos/s desde V_HOME_CMPS
+      float steps_per_cm = (Cfg.cm_per_rev > 0.0f) ? ((float)stepsPerRev / Cfg.cm_per_rev) : 0.0f;
+      v_goal = V_HOME_CMPS * steps_per_cm; // Usar V_HOME_CMPS
+      state = SysState::HOMING_SEEK;
+      if (optActive()) {
+        sensorCount++;
+        if (sensorCount >= 3) {
+          homingCtx.sensorFound = true;
+          homingCtx.phase = HomingPhase::STABILIZE; // Primero estabilizar tras detectar sensor
+          homingCtx.stabilizeStartMs = millis();
+          v_goal = 0.0f; // Detener motor
+          state = SysState::HOMING_SEEK; // Mantener en HOMING_SEEK durante estabilización
+          logPrint("HOME", "Sensor detectado, estabilizando");
+        }
+      } else {
+        sensorCount = 0;
+      }
+      // Timeout por vueltas
+      float vueltas = abs((float)(totalSteps - homingCtx.baselineSteps)) / (float)stepsPerRev;
+      if (!homingCtx.sensorFound && vueltas > 1.25f) {
+        homingCtx.phase = HomingPhase::FAULT;
+        state = SysState::FAULT;
+        v_goal = 0.0f;
+        logPrint("HOME", "Timeout homing: no se detectó sensor");
+      }
+      break;
+    }
+    case HomingPhase::OFFSET: {
+      int32_t offsetSteps = (int32_t)(abs(DEG_OFFSET) * stepsPerRev / 360.0f);
+      int64_t delta = llabs(totalSteps - homingCtx.baselineSteps);
+      // Calcular velocidad de homing en pasos/s desde V_HOME_CMPS
+      float steps_per_cm = (Cfg.cm_per_rev > 0.0f) ? ((float)stepsPerRev / Cfg.cm_per_rev) : 0.0f;
+      v_goal = V_HOME_CMPS * steps_per_cm; // Usar V_HOME_CMPS
+      state = SysState::HOMING_SEEK; // Mantener en HOMING_SEEK durante offset
+      if (delta >= offsetSteps) {
+        // Offset completado, hacer estabilización final
+        homingCtx.phase = HomingPhase::DONE;
+        homingCtx.stabilizeStartMs = millis();
+        v_goal = 0.0f;
+        state = SysState::HOMING_SEEK; // Mantener durante estabilización final
+        logPrint("HOME", "Offset aplicado, estabilización final en punto cero real");
+      }
+      break;
+    }
+    case HomingPhase::STABILIZE: {
+      v_goal = 0.0f;
+      state = SysState::HOMING_SEEK; // Mantener en HOMING_SEEK durante estabilización
+      if (millis() - homingCtx.stabilizeStartMs >= TIEMPO_ESTABILIZACION_HOME) {
+        if (homingCtx.sensorFound) {
+          // Tras estabilizar en sensor, ir a OFFSET
+          homingCtx.phase = HomingPhase::OFFSET;
+          homingCtx.baselineSteps = totalSteps;
+          // Usar selector: true=maestra, false=inversa
+          setDirection(DEG_OFFSET >= 0);
+          logPrint("HOME", "Estabilización completada, aplicando offset");
+        }
+      }
+      break;
+    }
+    case HomingPhase::DONE: {
+      v_goal = 0.0f;
+      state = SysState::HOMING_SEEK; // Mantener durante estabilización final
+      if (millis() - homingCtx.stabilizeStartMs >= TIEMPO_ESTABILIZACION_HOME) {
+        // Estabilización final completada - establecer punto cero y finalizar
+        setZeroHere(); // Esto establece homed = true y totalSteps = 0
+        
+        // Limpiar variables del sistema de homing
+        v_goal = 0.0f;
+        v = 0.0f;
+        a = 0.0f;
+        homingStepCounter = 0;
+        
+        // Estado final
+        state = SysState::READY;
+        logPrint("HOME", "Homing completado, cero fijado en punto real - READY");
+      }
+      break;
+    }
+    case HomingPhase::FAULT:
+      // Limpiar completamente en caso de error
+      v_goal = 0.0f;
+      v = 0.0f;
+      a = 0.0f;
+      rotateMode = false;
+      state = SysState::FAULT;
+      logPrint("HOME", "Homing FAULT - sistema detenido");
+      break;
   }
 }
 
-bool rotarHomingSeekCompleted() {
-  return rotarHomingFoundSensor;
-}
-
-void processRotarHomingOffset() {
-  // Calcular pasos necesarios para el offset
-  int32_t offsetSteps = (int32_t)(DEG_OFFSET * stepsPerRev / 360.0f);
-  
-  // Si no hay offset, completar inmediatamente
-  if (offsetSteps == 0) {
-    return;
-  }
-  
-  // Configurar movimiento CW para aplicar offset
-  setDirection(true); // CW
-  
-  // El offset se aplicará automáticamente por el contador de pasos
-  // Solo necesitamos verificar cuándo se complete
-}
-
-bool rotarHomingOffsetCompleted() {
-  int32_t offsetSteps = (int32_t)(DEG_OFFSET * stepsPerRev / 360.0f);
-  
-  if (offsetSteps == 0) {
-    logPrint("HOME", "ROTAR: Sin offset configurado - posición en sensor");
-    return true;
-  }
-  
-  // El contador se incrementa automáticamente en el ISR de control.cpp
-  if (rotarHomingOffsetCounter >= offsetSteps) {
-    logPrintf("HOME", "ROTAR: Offset aplicado - %.1f° desde sensor (%ld pasos)", 
-             DEG_OFFSET, offsetSteps);
-    return true;
-  }
-  
-  return false;
-}
-
-void processRotarHomingStabilize() {
-  // Detener movimiento durante estabilización
-  v_goal = 0.0f;
-  
-  // Inicializar timer si es la primera vez
-  if (rotarHomingStartTime == 0) {
-    rotarHomingStartTime = millis();
-    logPrintf("HOME", "ROTAR: Estabilizando por %lu ms en punto cero real", 
-             TIEMPO_ESTABILIZACION_HOME);
-  }
-}
-
-bool rotarHomingStabilizeCompleted() {
-  if (rotarHomingStartTime == 0) {
-    return false; // No ha iniciado aún
-  }
-  
-  uint32_t elapsed = millis() - rotarHomingStartTime;
-  
-  if (elapsed >= TIEMPO_ESTABILIZACION_HOME) {
-    logPrint("HOME", "ROTAR: Estabilización completada - punto cero establecido");
-    return true;
-  }
-  
-  return false;
+bool centralizedHomingCompleted() {
+  return (homingCtx.phase == HomingPhase::DONE || homingCtx.phase == HomingPhase::FAULT);
 }
 
 } // namespace App

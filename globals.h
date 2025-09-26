@@ -2,18 +2,48 @@
 #include <Arduino.h>
 #include "state.h"
 
+extern float V_HOME_CMPS; // Velocidad de homing en cm/s
+
 namespace App {
+
+// Sectores (grados) - Rangos simples
+struct SectorRange {
+  float start;    // grado inicial 
+  float end;      // grado final
+  bool wraps;     // true si cruza 360->0 (ej: 350-10)
+};
 
 // ===== Config persistente (EEPROM) =====
 struct Config {
   uint32_t magic;          // 'OLE3'
+  // Cinemática en cm
   float cm_per_rev;        // cm por vuelta
   float v_slow_cmps;       // cm/s
   float v_med_cmps;        // cm/s
   float v_fast_cmps;       // cm/s
   float accel_cmps2;       // cm/s^2
   float jerk_cmps3;        // cm/s^3
-  bool enable_s_curve;     // true=S-curve ON, false=control directo
+  bool  enable_s_curve;    // true=S-curve ON, false=control directo
+
+  // Homing
+  float    v_home_cmps;    // cm/s
+  uint32_t t_estab_ms;     // ms
+  float    deg_offset;     // grados
+
+  // Mecánica
+  uint32_t motor_full_steps_per_rev; // p.ej. 200
+  uint32_t microstepping;            // p.ej. 16
+  float    gear_ratio;               // p.ej. 1.0
+
+  // Dirección
+  bool     master_dir_cw; // true=CW, false=CCW
+
+  // Sectores
+  SectorRange cfg_deg_lento_up;
+  SectorRange cfg_deg_medio;
+  SectorRange cfg_deg_lento_down;
+  SectorRange cfg_deg_travel;
+
   uint32_t crc;
 };
 extern Config Cfg;
@@ -27,6 +57,9 @@ extern float    GEAR_RATIO;               // 1.0
 extern volatile SysState state;
 extern volatile bool     homed;
 extern RunMode RUN_MODE;
+
+// ===== Rotación pendiente =====
+extern float pendingRotateRevs; // 0 = no hay rotación pendiente
 
 // ===== Timer de control =====
 extern esp_timer_handle_t controlTimer;
@@ -45,7 +78,8 @@ extern volatile bool  stepPinState;
 extern volatile uint32_t pulseHoldUs;
 extern volatile float    stepAccumulatorUs;
 
-extern volatile bool  dirCW;
+extern volatile bool  master_direction; // true=CW, false=CCW
+extern volatile bool  inverse_direction; // negado de master_direction
 extern volatile uint64_t homingStepCounter;
 
 extern uint32_t revStartModSteps;
@@ -66,34 +100,15 @@ extern uint32_t lastBtnStartMs;
 extern bool     ledVerdeBlinkState;
 extern uint32_t ledBlinkLastMs;
 
-// Sectores (grados) - Rangos simples
-struct SectorRange {
-  float start;    // grado inicial 
-  float end;      // grado final
-  bool wraps;     // true si cruza 360->0 (ej: 350-10)
-};
-
 // 4 sectores que cubren 360° pero con 3 velocidades (Lento/Medio/Rápido)
 extern SectorRange DEG_LENTO_UP;    // 350°-10° (wrap) — tomar huevo (Lento)
 extern SectorRange DEG_MEDIO;       // 10°-170° — transporte (Medio)
 extern SectorRange DEG_LENTO_DOWN;  // 170°-190° — dejar huevo (Lento)
 extern SectorRange DEG_TRAVEL;      // 190°-350° — retorno sin carga (Rápido)
 
-// Homing pps
-extern bool  HOMING_SEEK_DIR_CW;
-extern float HOMING_V_SEEK_PPS;
-extern float HOMING_A_SEEK_PPS2;
-extern float HOMING_J_SEEK_PPS3;
-extern float HOMING_V_REAPP_PPS;
-extern float HOMING_A_REAPP_PPS2;
-extern float HOMING_J_REAPP_PPS3;
-extern float HOMING_BACKOFF_DEG;
-extern uint32_t HOMING_TIMEOUT_STEPS;
-
-// Homing avanzado (nuevos globals)
+// Homing centralizado
 extern uint32_t TIEMPO_ESTABILIZACION_HOME; // ms, default 2000
 extern float    DEG_OFFSET;                 // degrees, default 45.0
-extern uint32_t MAX_STEPS_TO_FIND_SENSOR;   // steps, default 4800
 
 // UI
 extern UiScreen uiScreen;
@@ -104,7 +119,6 @@ extern int confirmIndex; // 0=No, 1=Si
 extern uint8_t menuOrder[MI_COUNT];
 
 // Constantes control
-extern const bool     DIR_CW_LEVEL;
 extern const uint32_t STEP_PULSE_WIDTH_US;
 extern const uint32_t CONTROL_DT_US;
 
@@ -114,7 +128,7 @@ uint32_t modSteps();
 float currentAngleDeg();
 bool inRange(float x, float lo, float hi);
 bool inSectorRange(float deg, const SectorRange& sector);
-void setDirection(bool cw);
+void setDirection(bool useMasterDir);
 bool optActive();
 bool btnHomePhys();
 bool btnStartPhys();

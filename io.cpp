@@ -33,8 +33,6 @@ void updateLeds(SysState st, bool homedNow) {
     case SysState::READY:     rojo = !homedNow; verde = homedNow; break;
     case SysState::UNHOMED:
     case SysState::HOMING_SEEK:
-    case SysState::HOMING_BACKOFF:
-    case SysState::HOMING_REAPP:
     case SysState::STOPPING:
     case SysState::FAULT:     rojo = true;      verde = false;    break;
     case SysState::RUNNING: {
