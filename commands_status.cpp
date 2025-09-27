@@ -55,6 +55,11 @@ void procesarGetGeneralStatus() {
     Serial.println("\n=== HOMING ===");
     Serial.printf("Offset:         %6.1f°      (DEG_OFFSET=%.1f)\n", DEG_OFFSET, DEG_OFFSET);
     Serial.printf("Estabilizacion: %4lu ms     (T_ESTAB=%lu)\n", TIEMPO_ESTABILIZACION_HOME, TIEMPO_ESTABILIZACION_HOME);
+  Serial.printf("Switch dir:     %6.2f vueltas (HOMING_SWITCH=%.2f)\n", HOMING_SWITCH_TURNS, HOMING_SWITCH_TURNS);
+  Serial.printf("Timeout total:  %6.2f vueltas (HOMING_TIMEOUT=%.2f)\n", HOMING_TIMEOUT_TURNS, HOMING_TIMEOUT_TURNS);
+  if (homingFaultCount > 0) {
+    Serial.printf("Faults homing:  %6lu (desde arranque)\n", (unsigned long)homingFaultCount);
+  }
     
     Serial.println("\n=== ESTADO ACTUAL ===");
     float ang = currentAngleDeg();

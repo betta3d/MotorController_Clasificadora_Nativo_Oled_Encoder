@@ -44,8 +44,9 @@ void startCentralizedHoming() {
   // Establecer estado del sistema
   state = SysState::HOMING_SEEK; // Estado global para movimiento
   
-  logPrintf("HOME", "Inicio homing centralizado - master=%d inverse=%d selector(inverse)=%d totalSteps=%lld", 
-            master_direction?1:0, inverse_direction?1:0, currentDirIsMaster?1:0, (long long)totalSteps);
+  logPrintf("HOME", "Inicio homing centralizado - master=%d inverse=%d selector(inverse)=%d totalSteps=%lld switch=%.2f timeout=%.2f", 
+            master_direction?1:0, inverse_direction?1:0, currentDirIsMaster?1:0, (long long)totalSteps,
+            HOMING_SWITCH_TURNS, HOMING_TIMEOUT_TURNS);
 }
 
 void processCentralizedHoming() {
@@ -82,19 +83,21 @@ void processCentralizedHoming() {
                   (currentDirIsMaster?master_direction:inverse_direction)?1:0,
                   vueltasLocal, vueltasTotal, optActive()?1:0, homingCtx.triedAlternate?1:0);
       }
-      // Si no detectamos sensor en ~0.7 vuelta local: cambiar dirección (una sola vez)
-      if (!homingCtx.sensorFound && !homingCtx.triedAlternate && vueltasLocal > 0.7f) {
+      // Si no detectamos sensor en HOMING_SWITCH_TURNS vuelta local: cambiar dirección (una sola vez)
+      if (!homingCtx.sensorFound && !homingCtx.triedAlternate && vueltasLocal > HOMING_SWITCH_TURNS) {
         homingCtx.triedAlternate = true;
         homingCtx.baselineSteps = totalSteps; // reset local
         setDirection(true); // ahora usar dirección maestra
-        logPrint("HOME", "No sensor en primera dirección, invirtiendo para segundo intento");
+        logPrintf("HOME", "Switch dir tras %.3f vueltas locales (threshold=%.3f)", vueltasLocal, HOMING_SWITCH_TURNS);
       }
-      // Timeout total tras ~1.4 vueltas sumadas (ambas direcciones)
-      if (!homingCtx.sensorFound && vueltasTotal > 1.4f) {
+      // Timeout total tras HOMING_TIMEOUT_TURNS vueltas sumadas (ambas direcciones)
+      if (!homingCtx.sensorFound && vueltasTotal > HOMING_TIMEOUT_TURNS) {
         homingCtx.phase = HomingPhase::FAULT;
         state = SysState::FAULT;
         v_goal = 0.0f;
-        logPrint("HOME", "Timeout homing: no se detectó sensor tras ambos sentidos");
+        homingFaultCount++;
+        logPrintf("HOME", "Timeout homing: no sensor tras %.3f vueltas (threshold=%.3f) faultCount=%lu", 
+                  vueltasTotal, HOMING_TIMEOUT_TURNS, (unsigned long)homingFaultCount);
       }
       break;
     }
@@ -156,7 +159,7 @@ void processCentralizedHoming() {
       a = 0.0f;
       rotateMode = false;
       state = SysState::FAULT;
-      logPrint("HOME", "Homing FAULT - sistema detenido");
+      logPrintf("HOME", "Homing FAULT - sistema detenido (faultCount=%lu)", (unsigned long)homingFaultCount);
       break;
   }
 }

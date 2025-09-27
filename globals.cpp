@@ -7,6 +7,11 @@ namespace App {
 
 Config Cfg;
 
+// Parámetros homing adaptativo (se inicializan con defaults, luego loadConfig puede sobrescribir)
+float HOMING_SWITCH_TURNS = 0.70f;
+float HOMING_TIMEOUT_TURNS = 1.40f;
+volatile uint32_t homingFaultCount = 0;
+
 uint32_t MOTOR_FULL_STEPS_PER_REV = 200;
 uint32_t MICROSTEPPING             = 16;
 float    GEAR_RATIO                = 1.0f;

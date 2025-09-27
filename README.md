@@ -58,6 +58,9 @@ ROTAR=2.5           # Rotar 2.5 vueltas (+ CW, - CCW)
 ROTAR=-1            # Rotar 1 vuelta en sentido contrario
 STOP                # Detener movimiento suave
 HOME                # Ejecutar homing independiente
+HOMING_SWITCH=0.70  # Vueltas locales antes de invertir dirección en homing
+HOMING_TIMEOUT=1.40 # Vueltas totales acumuladas antes de declarar fallo
+HOMING_DEFAULTS     # Restaurar parámetros de homing a valores por defecto
 
 # Configuración de curvas S
 SCURVE=ON           # Habilitar curvas S (movimiento suave)
@@ -304,7 +307,50 @@ DEG_TRAVEL=185-355
 1. **Verificar sensor**: Pin correcto y cableado del sensor óptico
 2. **Ajustar dirección**: Cambiar `MASTER_DIR` si busca lado incorrecto
 3. **Velocidad**: Reducir `V_HOME` para mayor precisión
-4. **Timeout**: Verificar que hay suficiente recorrido físico
+4. **Umbrales**: Ajustar `HOMING_SWITCH` (cambio de sentido) y `HOMING_TIMEOUT` (falla)
+
+## 🔄 Homing Adaptativo Bidireccional
+
+El sistema de homing realiza una búsqueda robusta del sensor óptico en dos fases automáticas sin requerir que el usuario conozca siempre el sentido correcto inicial.
+
+Flujo del algoritmo:
+1. Arranca siempre en la dirección inversa al master (selector=false) para diversificar el primer barrido.
+2. Avanza hasta detectar el sensor óptico. Si lo detecta: estabiliza, aplica offset y finaliza.
+3. Si NO lo detecta tras `HOMING_SWITCH` vueltas locales (ej. 0.70): invierte dirección (selector=true) y reinicia el contador local.
+4. Si el recorrido acumulado (ambas direcciones) supera `HOMING_TIMEOUT` (ej. 1.40 vueltas) sin detectar sensor: entra en FAULT.
+
+Parámetros configurables:
+```
+HOMING_SWITCH=0.70   # Rango recomendado: 0.50 – 0.90
+HOMING_TIMEOUT=1.40  # Debe ser >= HOMING_SWITCH * 1.1 (recomendado ~2× HOMING_SWITCH)
+```
+
+Comando de restauración:
+```
+HOMING_DEFAULTS      # Restaura V_HOME, T_ESTAB, DEG_OFFSET, HOMING_SWITCH, HOMING_TIMEOUT
+```
+
+Recomendaciones de ajuste:
+- Si el sensor está muy cerca del inicio físico → bajar `HOMING_SWITCH` a 0.50.
+- Si hay juego mecánico o holgura → aumentar `HOMING_SWITCH` a 0.80 para dar más margen inicial.
+- Si el plato puede girar más de 2 vueltas completas libres → se puede subir `HOMING_TIMEOUT` (ej. 2.0) para más tolerancia.
+- Si aparecen FAULTs esporádicos y el sensor está OK → revisar alimentación / ruido antes de subir límites.
+
+Diagnóstico:
+- `STATUS` muestra: switch, timeout y contador de fallas desde el arranque.
+- Logs `HOME` y `HOME_DBG` indican cuándo se cambió de sentido y progreso (`LOG-HOME=ON`, `LOG-HOME_DBG=ON`).
+
+Fallas comunes:
+| Síntoma | Posible causa | Acción sugerida |
+|---------|---------------|-----------------|
+| FAULT recurrente rápido | `HOMING_TIMEOUT` demasiado bajo | Incrementar a 1.6–1.8 |
+| Cambia de sentido muy tarde | `HOMING_SWITCH` alto | Bajar a 0.60 |
+| Cambia demasiado pronto | `HOMING_SWITCH` bajo | Subir a 0.75 |
+| Sensor detecta pero offset mal | `DEG_OFFSET` incorrecto | Recalcular y ajustar |
+
+Registro de eventos:
+- En FAULT se incrementa un contador interno (`Faults homing` en STATUS) útil para sesiones largas.
+- Cada cambio de sentido se loguea: `Switch dir tras X vueltas locales`.
 
 ### ❌ Movimiento brusco
 1. **Activar curvas S**: `SCURVE=ON`
@@ -348,6 +394,12 @@ S-Curve        : ON
 Aceleración    : 40.0 cm/s²
 Jerk           : 80.0 cm/s³
 Dir Principal  : CW
+
+--- HOMING ADAPTATIVO ---
+Offset         : 45.0°
+Switch Dir     : 0.70 vueltas
+Timeout Total  : 1.40 vueltas
+Faults Homing  : 0
 
 --- SECTORES ANGULARES ---
 LENTO_UP      : 350°-10° (wrap) - Vel LENTA

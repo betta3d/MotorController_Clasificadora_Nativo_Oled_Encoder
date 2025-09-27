@@ -27,12 +27,11 @@ String normalizeCommand(const String& cmd) {
 }
 
 void processCommands() {
-  // ...existing code...
   if (!Serial.available()) return;
-  
-  String line = Serial.readStringUntil('\n'); 
+
+  String line = Serial.readStringUntil('\n');
   line.trim();
-  
+
   // Normalizar comando para comparación (mayúsculas)
   String upperLine = normalizeCommand(line);
   float value = 0;
@@ -64,6 +63,40 @@ void processCommands() {
     } else {
       Serial.println("ERROR: Use MASTER_DIR=CW o MASTER_DIR=CCW");
     }
+  } else if (upperLine.startsWith("HOMING_SWITCH=")) {
+    float val = upperLine.substring(14).toFloat();
+    if (val > 0.05f && val < 10.0f) {
+      HOMING_SWITCH_TURNS = val;
+      if (HOMING_TIMEOUT_TURNS < HOMING_SWITCH_TURNS * 1.1f) {
+        HOMING_TIMEOUT_TURNS = HOMING_SWITCH_TURNS * 1.1f;
+        Serial.println("[HOMING] Ajustado HOMING_TIMEOUT para mantener margen >=10%");
+      }
+      saveConfig();
+      Serial.printf("[HOMING] HOMING_SWITCH=%.3f vueltas\n", HOMING_SWITCH_TURNS);
+    } else {
+      Serial.println("ERROR: HOMING_SWITCH debe estar entre 0.05 y 10.0");
+    }
+  } else if (upperLine.startsWith("HOMING_TIMEOUT=")) {
+    float val = upperLine.substring(14).toFloat();
+    if (val > 0.10f && val < 20.0f) {
+      if (val < HOMING_SWITCH_TURNS * 1.1f) {
+        Serial.println("ERROR: HOMING_TIMEOUT debe ser >= HOMING_SWITCH * 1.1");
+      } else {
+        HOMING_TIMEOUT_TURNS = val;
+        saveConfig();
+        Serial.printf("[HOMING] HOMING_TIMEOUT=%.3f vueltas\n", HOMING_TIMEOUT_TURNS);
+      }
+    } else {
+      Serial.println("ERROR: HOMING_TIMEOUT debe estar entre 0.10 y 20.0");
+    }
+  } else if (upperLine.equals("HOMING_DEFAULTS")) {
+    HOMING_SWITCH_TURNS = 0.70f;
+    HOMING_TIMEOUT_TURNS = 1.40f;
+    V_HOME_CMPS = 3.0f;
+    TIEMPO_ESTABILIZACION_HOME = 2000;
+    DEG_OFFSET = 45.0f;
+    saveConfig();
+    Serial.println("[HOMING] Parámetros de homing restaurados a defaults");
     
   } else if (upperLine.equals("STATUS")) {
     Comandos::procesarGetGeneralStatus();

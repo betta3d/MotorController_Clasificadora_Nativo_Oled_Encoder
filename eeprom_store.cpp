@@ -29,6 +29,8 @@ void setDefaults() {
   Cfg.v_home_cmps  = 3.0f;
   Cfg.t_estab_ms   = 2000;
   Cfg.deg_offset   = 45.0f;
+  Cfg.homing_switch_turns  = 0.70f;
+  Cfg.homing_timeout_turns = 1.40f;
 
   // Mecánica
   Cfg.motor_full_steps_per_rev = 200;
@@ -60,6 +62,12 @@ bool loadConfig() {
   V_HOME_CMPS = Cfg.v_home_cmps;
   TIEMPO_ESTABILIZACION_HOME = Cfg.t_estab_ms;
   DEG_OFFSET = Cfg.deg_offset;
+  HOMING_SWITCH_TURNS  = (Cfg.homing_switch_turns  > 0.05f) ? Cfg.homing_switch_turns  : 0.70f;
+  HOMING_TIMEOUT_TURNS = (Cfg.homing_timeout_turns > 0.10f) ? Cfg.homing_timeout_turns : 1.40f;
+  // Saneamiento: timeout >= switch*1.1
+  if (HOMING_TIMEOUT_TURNS < HOMING_SWITCH_TURNS * 1.1f) {
+    HOMING_TIMEOUT_TURNS = HOMING_SWITCH_TURNS * 1.1f;
+  }
 
   // Mecánica
   MOTOR_FULL_STEPS_PER_REV = Cfg.motor_full_steps_per_rev;
@@ -88,6 +96,8 @@ void saveConfig() {
   Cfg.v_home_cmps = V_HOME_CMPS;
   Cfg.t_estab_ms  = TIEMPO_ESTABILIZACION_HOME;
   Cfg.deg_offset  = DEG_OFFSET;
+  Cfg.homing_switch_turns  = HOMING_SWITCH_TURNS;
+  Cfg.homing_timeout_turns = HOMING_TIMEOUT_TURNS;
 
   // Mecánica
   Cfg.motor_full_steps_per_rev = MOTOR_FULL_STEPS_PER_REV;

@@ -29,6 +29,9 @@ struct Config {
   float    v_home_cmps;    // cm/s
   uint32_t t_estab_ms;     // ms
   float    deg_offset;     // grados
+  // Homing adaptativo (nuevo)
+  float    homing_switch_turns;   // vueltas locales antes de invertir dirección (ej 0.7)
+  float    homing_timeout_turns;  // vueltas totales antes de fault (ej 1.4)
 
   // Mecánica
   uint32_t motor_full_steps_per_rev; // p.ej. 200
@@ -47,6 +50,11 @@ struct Config {
   uint32_t crc;
 };
 extern Config Cfg;
+
+// Variables runtime accesibles (alias legibles)
+extern float HOMING_SWITCH_TURNS;   // default 0.70
+extern float HOMING_TIMEOUT_TURNS;  // default 1.40
+extern volatile uint32_t homingFaultCount; // contador no persistente de fallas homing
 
 // ===== Parámetros mecánicos =====
 extern uint32_t MOTOR_FULL_STEPS_PER_REV; // 200
