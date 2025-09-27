@@ -32,14 +32,15 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
   switch (state) {
     case SysState::RUNNING: {
       // Movimiento continuo por sectores hasta STOP o FAULT
-  applySectorBasedMovement(true);
+      // Siempre usamos la dirección maestra lógica para RUNNING.
+      applySectorBasedMovement(true);
     } break;
 
     case SysState::ROTATING: {
       // Movimiento por N vueltas específicas con misma lógica de sectores
-      // Usa la dirección según rotateDirection (true=positivo, false=negativo)
-  bool useMasterSel = rotateDirection ? true : false;
-  applySectorBasedMovement(useMasterSel);
+      // Usa la dirección según rotateDirection (true=positivo=maestra, false=inversa)
+      bool useMasterSel = rotateDirection ? true : false;
+      applySectorBasedMovement(useMasterSel);
       
       // DEBUG: Mostrar estado cada 100 ticks (0.1 segundos)
       static uint32_t debugCounter = 0;
@@ -202,11 +203,11 @@ static void IRAM_ATTR stepOnTick(void* /*arg*/) {
 
     // Actualizar contadores de pasos y dirección
     uint32_t prevMod = modSteps();
-    if (master_direction) {
-      totalSteps++;
-    } else {
-      totalSteps--;
-    }
+    // Incremento/decremento según nivel físico actual del pin de dirección.
+    // Esto asegura consistencia si se cambia master_direction en tiempo de ejecución.
+    // Actualizar según selector lógico actual y configuración master/inverse.
+    bool physical = currentDirIsMaster ? master_direction : inverse_direction;
+    totalSteps += physical ? 1 : -1;
 
     // Contadores específicos de modos
     if (state == SysState::HOMING_SEEK) {

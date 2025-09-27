@@ -20,7 +20,7 @@ float pendingRotateRevs = 0.0f;
 
 esp_timer_handle_t controlTimer = nullptr;
 
-volatile uint64_t totalSteps = 0;
+volatile int64_t  totalSteps = 0; // signed para permitir decrementos seguros
 volatile uint32_t stepsPerRev = 200 * 16;
 
 volatile float v = 0.0f;
@@ -35,6 +35,7 @@ volatile float    stepAccumulatorUs = 0.0f;
 
 volatile bool  master_direction = true;  // CW por defecto (HIGH)
 volatile bool  inverse_direction = !master_direction; // CCW por defecto (LOW) - opuesto a master
+volatile bool  currentDirIsMaster = true; // selector actualmente aplicado
 volatile uint64_t homingStepCounter = 0;
 
 uint32_t revStartModSteps = 0;
@@ -83,7 +84,11 @@ const uint32_t STEP_PULSE_WIDTH_US = 20;
 const uint32_t CONTROL_DT_US       = 1000;
 
 float degPerStep() { return 360.0f / (float)stepsPerRev; }
-uint32_t modSteps(){ return (uint32_t)(totalSteps % stepsPerRev); }
+uint32_t modSteps(){
+  int64_t m = totalSteps % (int64_t)stepsPerRev;
+  if (m < 0) m += stepsPerRev; // normalizar a rango positivo
+  return (uint32_t)m;
+}
 float currentAngleDeg(){ return modSteps() * degPerStep(); }
 bool inRange(float x, float lo, float hi){ return (x >= lo) && (x < hi); }
 
@@ -102,8 +107,9 @@ bool inSectorRange(float deg, const SectorRange& sector) {
   }
 }
 void setDirection(bool useMasterDir){
-  bool dir = useMasterDir ? master_direction : inverse_direction;
-  digitalWrite(PIN_DIR, dir ? HIGH : LOW);  // master_direction=true → HIGH (CW), false → LOW (CCW)
+  currentDirIsMaster = useMasterDir;
+  bool physical = useMasterDir ? master_direction : inverse_direction;
+  digitalWrite(PIN_DIR, physical ? HIGH : LOW);
 }
 bool optActive(){ return digitalRead(PIN_OPT_HOME) == HIGH; }
 bool btnHomePhys(){ return digitalRead(PIN_BTN_HOME) == LOW; }

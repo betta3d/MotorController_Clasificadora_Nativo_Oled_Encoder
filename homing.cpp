@@ -9,14 +9,17 @@ float V_HOME_CMPS = 3.0f; // cm/s por defecto
 
 namespace App {
 
-HomingContext homingCtx = {HomingPhase::SEEK, 0, false, 0};
+HomingContext homingCtx = {HomingPhase::SEEK, 0, false, 0, false, 0, false};
 
 void startCentralizedHoming() {
   // Reset completo del contexto de homing
   homingCtx.phase = HomingPhase::SEEK;
   homingCtx.baselineSteps = totalSteps;
+  homingCtx.firstBaselineSteps = totalSteps;
   homingCtx.sensorFound = false;
   homingCtx.stabilizeStartMs = 0;
+  homingCtx.triedAlternate = false;
+  homingCtx.initialSelector = false; // siempre comenzamos inverse (selector=false)
   
   // Reset de variables que pueden interferir con homing
   homed = false;
@@ -31,8 +34,8 @@ void startCentralizedHoming() {
   // NO limpiar pendingRotateRevs aquí: puede contener una rotación solicitada
   // que debe ejecutarse al finalizar el homing. Se consumirá más tarde si procede.
   
-  // Configurar dirección para buscar sensor
-  setDirection(false); // Buscar sensor usando dirección inversa a la maestra
+  // Configurar dirección para buscar sensor: primer intento inverse (selector=false)
+  setDirection(false);
   
   // Calcular velocidad de homing en pasos/s desde V_HOME_CMPS
   float steps_per_cm = (Cfg.cm_per_rev > 0.0f) ? ((float)stepsPerRev / Cfg.cm_per_rev) : 0.0f;
@@ -41,7 +44,8 @@ void startCentralizedHoming() {
   // Establecer estado del sistema
   state = SysState::HOMING_SEEK; // Estado global para movimiento
   
-  logPrint("HOME", "Inicio homing centralizado - buscando sensor en inverse_direction");
+  logPrintf("HOME", "Inicio homing centralizado - master=%d inverse=%d selector(inverse)=%d totalSteps=%lld", 
+            master_direction?1:0, inverse_direction?1:0, currentDirIsMaster?1:0, (long long)totalSteps);
 }
 
 void processCentralizedHoming() {
@@ -67,12 +71,30 @@ void processCentralizedHoming() {
         sensorCount = 0;
       }
       // Timeout por vueltas
-      float vueltas = abs((float)(totalSteps - homingCtx.baselineSteps)) / (float)stepsPerRev;
-      if (!homingCtx.sensorFound && vueltas > 1.25f) {
+      float vueltasLocal = fabsf((float)(totalSteps - homingCtx.baselineSteps)) / (float)stepsPerRev;
+      float vueltasTotal = fabsf((float)(totalSteps - homingCtx.firstBaselineSteps)) / (float)stepsPerRev;
+      // Telemetría periódica (cada ~0.25 s)
+      static uint32_t lastDbgMs = 0; 
+      if (millis() - lastDbgMs > 250) {
+        lastDbgMs = millis();
+        logPrintf("HOME_DBG", "selMaster=%d phys=%d local=%.3f total=%.3f opt=%d triedAlt=%d", 
+                  currentDirIsMaster?1:0,
+                  (currentDirIsMaster?master_direction:inverse_direction)?1:0,
+                  vueltasLocal, vueltasTotal, optActive()?1:0, homingCtx.triedAlternate?1:0);
+      }
+      // Si no detectamos sensor en ~0.7 vuelta local: cambiar dirección (una sola vez)
+      if (!homingCtx.sensorFound && !homingCtx.triedAlternate && vueltasLocal > 0.7f) {
+        homingCtx.triedAlternate = true;
+        homingCtx.baselineSteps = totalSteps; // reset local
+        setDirection(true); // ahora usar dirección maestra
+        logPrint("HOME", "No sensor en primera dirección, invirtiendo para segundo intento");
+      }
+      // Timeout total tras ~1.4 vueltas sumadas (ambas direcciones)
+      if (!homingCtx.sensorFound && vueltasTotal > 1.4f) {
         homingCtx.phase = HomingPhase::FAULT;
         state = SysState::FAULT;
         v_goal = 0.0f;
-        logPrint("HOME", "Timeout homing: no se detectó sensor");
+        logPrint("HOME", "Timeout homing: no se detectó sensor tras ambos sentidos");
       }
       break;
     }
@@ -101,7 +123,7 @@ void processCentralizedHoming() {
           // Tras estabilizar en sensor, ir a OFFSET
           homingCtx.phase = HomingPhase::OFFSET;
           homingCtx.baselineSteps = totalSteps;
-          // Usar selector: true=maestra, false=inversa
+          // Offset: selector depende del signo de DEG_OFFSET (>=0 usar master, <0 usar inverse)
           setDirection(DEG_OFFSET >= 0);
           logPrint("HOME", "Estabilización completada, aplicando offset");
         }

@@ -65,7 +65,7 @@ extern float pendingRotateRevs; // 0 = no hay rotación pendiente
 extern esp_timer_handle_t controlTimer;
 
 // ===== Cinemática en pasos/seg =====
-extern volatile uint64_t totalSteps;
+extern volatile int64_t  totalSteps; // signed to allow decrement without underflow
 extern volatile uint32_t stepsPerRev;
 
 extern volatile float v;         // pps
@@ -129,6 +129,8 @@ float currentAngleDeg();
 bool inRange(float x, float lo, float hi);
 bool inSectorRange(float deg, const SectorRange& sector);
 void setDirection(bool useMasterDir);
+// Último selector aplicado (true=usando master_direction, false=usando inverse_direction)
+extern volatile bool currentDirIsMaster;
 bool optActive();
 bool btnHomePhys();
 bool btnStartPhys();
