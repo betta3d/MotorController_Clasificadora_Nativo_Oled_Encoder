@@ -18,11 +18,11 @@ void setDefaults() {
   Cfg.magic        = CFG_MAGIC;
   // Cinemática
   Cfg.cm_per_rev   = 20.0f;
-  Cfg.v_slow_cmps  = 10.0f;
-  Cfg.v_med_cmps   = 30.0f;
-  Cfg.v_fast_cmps  = 90.0f;
-  Cfg.accel_cmps2  = 500.0f;
-  Cfg.jerk_cmps3   = 3000.0f;
+  Cfg.v_slow_cmps  = 7.0f;
+  Cfg.v_med_cmps   = 12.0f;
+  Cfg.v_fast_cmps  = 20.0f;
+  Cfg.accel_cmps2  = 40.0f;
+  Cfg.jerk_cmps3   = 1500.0f;
   Cfg.enable_s_curve = true;  // S-curve habilitada por defecto
 
   // Homing

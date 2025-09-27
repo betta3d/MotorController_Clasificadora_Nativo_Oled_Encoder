@@ -73,9 +73,7 @@ bool procesarComandoControl(const String& commandName, const String& upperLine) 
             // Iniciar rotación
             rotateStartMillis = millis();
             state = SysState::ROTATING;
-            uiScreen = UiScreen::STATUS;
-            screensaverActive = false;
-            screensaverStartTime = rotateStartMillis;
+            uiScreen = UiScreen::STATUS; // screensaver removido
 
             Serial.printf("[ROTAR] Iniciando %.1f vueltas (%s) - %ld pasos objetivo\n", 
                          value, (value > 0) ? "CW" : "CCW", (long)rotateTargetSteps);
@@ -187,9 +185,7 @@ bool ejecutarRotacionPendiente() {
     // Iniciar rotación
     rotateStartMillis = millis();
     state = SysState::ROTATING;
-    uiScreen = UiScreen::STATUS;
-    screensaverActive = false;
-    screensaverStartTime = rotateStartMillis;
+    uiScreen = UiScreen::STATUS; // screensaver removido
 
     Serial.printf("[ROTAR] Iniciando %.1f vueltas (%s) - %ld pasos objetivo (tras homing)\n", 
                  value, (value > 0) ? "CW" : "CCW", (long)rotateTargetSteps);

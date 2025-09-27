@@ -464,3 +464,126 @@ MIT License - Ver LICENSE file para detalles completos.
 **🥚 Desarrollado para clasificadora automática de huevos con tecnología ESP32 ⚙️**
 
 *Versión del README: 2.0 - Arquitectura Modular*
+
+---
+
+## 🧭 Menú OLED Jerárquico (Nueva Interfaz)
+
+El sistema incluye un menú jerárquico navegable con el encoder (giro = mover / cambiar valor, click = entrar/aceptar/avanzar foco). Desde la pantalla STATUS un click abre el menú raíz.
+
+```
+MENU (raíz)
+├─ Acciones
+│  ├─ HOME          (ACTION)      → Inicia homing centralizado
+│  ├─ RUN           (ACTION)      → Entra a RUNNING (si homed y READY)
+│  ├─ STOP          (ACTION)      → Solicita STOPPING (RUNNING / ROTATING)
+│  ├─ ROTAR         (SUBMENU)
+│  │  ├─ VUeltas    (VALUE_FLOAT) → -100.00 … 100.00 rev (paso 0.25)
+│  │  ├─ Ejecutar   (ACTION)      → Inicia rotación (si no homed primero homing)
+│  │  └─ < Volver   (BACK)
+│  ├─ SAVE          (ACTION)      → Guarda config en EEPROM
+│  ├─ DEFAULTS      (ACTION)      → Restaura valores por defecto
+│  └─ < Volver      (BACK)
+│
+├─ Movimiento
+│  ├─ MASTER_DIR    (VALUE_ENUM)  → {CW, CCW}
+│  ├─ S_CURVE       (VALUE_ENUM)  → {OFF, ON}
+│  └─ < Volver
+│
+├─ Velocidades
+│  ├─ V_SLOW        (VALUE_FLOAT cm/s)
+│  ├─ V_MED         (VALUE_FLOAT cm/s)
+│  ├─ V_FAST        (VALUE_FLOAT cm/s)
+│  ├─ V_HOME        (VALUE_FLOAT cm/s)
+│  └─ < Volver
+│
+├─ Aceleracion
+│  ├─ ACCEL         (VALUE_FLOAT cm/s²)
+│  ├─ JERK          (VALUE_FLOAT cm/s³)
+│  └─ < Volver
+│
+├─ Mecanica
+│  ├─ CM_PER_REV    (VALUE_FLOAT)
+│  ├─ MOTOR_STEPS   (VALUE_INT)
+│  ├─ MICROSTEP     (VALUE_INT)
+│  ├─ GEAR_RATIO    (VALUE_FLOAT)
+│  └─ < Volver
+│
+├─ Homing
+│  ├─ DEG_OFFSET    (VALUE_FLOAT deg)
+│  ├─ T_ESTAB       (VALUE_INT ms)
+│  ├─ SWITCH_V      (VALUE_FLOAT turn)   (HOMING_SWITCH_TURNS)
+│  ├─ TIMEOUT_V     (VALUE_FLOAT turn)   (HOMING_TIMEOUT_TURNS)
+│  └─ < Volver
+│
+├─ Sectores
+│  ├─ LENTO_UP      (RANGE_DEG: start/end/wrap)
+│  ├─ MEDIO         (RANGE_DEG)
+│  ├─ LENTO_DOWN    (RANGE_DEG)
+│  ├─ TRAVEL        (RANGE_DEG)
+│  └─ < Volver
+│
+└─ Pesaje (placeholder)
+    ├─ STATIONS      (PLACEHOLDER - futuro: estaciones de peso)
+    └─ < Volver
+```
+
+### Tipos de Nodo
+| Tipo          | Descripción | Interacción |
+|---------------|-------------|------------|
+| SUBMENU       | Contiene hijos | Click entra / < Volver sale |
+| VALUE_FLOAT   | Número flotante (min/max/step) | Girar ajusta / Click sale |
+| VALUE_INT     | Entero (min/max/step) | Girar ajusta / Click sale |
+| VALUE_ENUM    | Lista fija de labels | Girar cicla / Click sale |
+| RANGE_DEG     | Rango angular con wrap | Ciclo foco: Start→End→Wrap→OK |
+| ACTION        | Ejecuta lógica inmediata | Click ejecuta |
+| PLACEHOLDER   | Sin acción (futuro o < Volver) | N/A |
+
+### Modos de Pantalla
+| Modo UI        | Se activa cuando | Contenido |
+|----------------|------------------|-----------|
+| STATUS          | Pantalla base | Estado sistema / ángulo / velocidad |
+| MAIN_MENU/SUB_MENU | Navegación | Lista de nodos |
+| EDIT_VALUE      | VALUE_* | Etiqueta + valor editable |
+| EDIT_RANGE      | RANGE_DEG | Start / End / Wrap / OK (foco cíclico) |
+| ACTION_EXEC     | Acción prolongada | Estado dinámico + tiempo + STOP |
+| FAULT_SCREEN    | SysState::FAULT | Mensaje de falla y retorno a menú |
+
+### Flujo EDIT_RANGE
+1. Click entra a rango.
+2. Foco inicial = Start: girar ±1° (wrap circular -360↔+360 simplificado).
+3. Click → End: ajustar igual que Start.
+4. Click → Wrap: girar (cualquier delta) alterna SI/NO.
+5. Click → OK: guarda y vuelve al submenú.
+
+### Monitor de Acción
+- Se activa al lanzar HOME / ROTAR / RUN (si procede).
+- Muestra tiempo desde inicio y estado actual (HOMING_SEEK, ROTATING, RUNNING, STOPPING).
+- Click: STOP (si RUNNING/ROTATING) o ignorado en homing.
+- Cambio a FAULT redirige a FAULT_SCREEN automáticamente.
+
+### Recuperación de FAULT
+- FAULT_SCREEN no borra la causa; revisar logs serial (`HOME`, `HOME_DBG`, `SYSTEM`).
+- Click en FAULT_SCREEN retorna al menú, el estado global permanece en FAULT hasta intervención (ej. reset o lógica futura de clear).
+
+### Extensión Futura: Pesaje
+Plan para `Pesaje`:
+```
+Pesaje
+ ├─ E1 (SUBMENU)
+ │   ├─ Habilitar   (VALUE_ENUM {OFF,ON})
+ │   ├─ ClaseRef    (VALUE_ENUM {SUPERX,EXTRA,A,B,C,D})
+ │   ├─ RangoPeso   (RANGE_FLOAT min/max)
+ │   ├─ Tara        (ACTION) → Captura offset HX711
+ │   ├─ Calibrar    (ACTION) → Flujo guiado
+ │   └─ < Volver
+ └─ ... E2..E6
+```
+
+### Notas Internas
+- Actualización inmediata: Los VALUE_* aplican cambios en vivo (se puede optimizar para diferir hasta SAVE).
+- ENUMs especiales: MASTER_DIR y S_CURVE tienen efectos secundarios inmediatos (dirección y curvas S).
+- Validación sectores: Próxima mejora (evitar solapes incoherentes al editar rangos).
+
+---
+*Sección agregada en rama `feature/new_menu_ui` (versión UI refactor preliminar).* 

@@ -30,6 +30,7 @@ void setup() {
   ioInit();           // pines, I2C y LEDs
   encoderInit();      // encoder por ISR
   oledInit();         // OLED
+  initNewMenuModel(); // Nuevo menú jerárquico
   controlStart();     // esp_timer 1 kHz
 
   digitalWrite(PIN_STEP, LOW);
@@ -83,9 +84,7 @@ void loop() {
         ledVerdeBlinkState = false; ledBlinkLastMs = now;
         state = SysState::RUNNING;
         logPrint("START_STOP", "RUNNING: sectores activos.");
-        uiScreen = UiScreen::STATUS;
-        screensaverActive = false; // Ensure screensaver is off initially
-        screensaverStartTime = now; // Start screensaver timer
+  uiScreen = UiScreen::STATUS; // screensaver eliminado
       }
     }
   }
