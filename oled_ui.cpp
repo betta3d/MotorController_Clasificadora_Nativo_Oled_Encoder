@@ -1,4 +1,6 @@
 #include "oled_ui.h"
+#include <ctype.h>
+#include <string.h>
 #include "globals.h"
 #include "motion.h"
 #include "eeprom_store.h"
@@ -356,10 +358,24 @@ static void applyDeltaToNode(const MenuNode& N, int8_t encDelta){
       // aplicar efectos secundarios (ej: master dir / s-curve)
       if (editingNode == &N){
         // sincronizar variables reales
-        if (strcmp(N.label, "MASTER_DIR")==0){
+        // Hicimos rename de etiquetas ("1. Master Dir", "2. S Curve") así que usamos substring case-insensitive
+        auto icontains = [](const char* hay, const char* needle){
+          if (!hay || !needle) return false;
+          size_t nlen = strlen(needle);
+          for (const char* p = hay; *p; ++p){
+            size_t i=0; while (i<nlen && p[i] && tolower((unsigned char)p[i])==tolower((unsigned char)needle[i])) ++i;
+            if (i==nlen) return true;
+          }
+          return false;
+        };
+        if (icontains(N.label, "master dir")){
           master_direction = (*N.data.ve.ptr == 0); // 0=CW
-        } else if (strcmp(N.label, "S_CURVE")==0){
+          inverse_direction = !master_direction;
+          Cfg.master_dir_cw = master_direction; // reflejar para persistencia
+          logPrintf("CONFIG","Master Dir=%s", master_direction?"CW":"CCW");
+        } else if (icontains(N.label, "s curve")){
           Cfg.enable_s_curve = (*N.data.ve.ptr == 1);
+          logPrintf("CONFIG","S-Curve %s", Cfg.enable_s_curve?"ON":"OFF");
         }
         applyConfigToProfiles();
       }
@@ -431,6 +447,7 @@ void uiProcess(int8_t encDelta, bool encClick) {
         if (encClick) {
           // Guardar inmediatamente al salir
           saveConfig();
+          logPrint("CONFIG","Guardado EEPROM (valor)");
           uiMode = UiViewMode::SUB_MENU; // regresa a lista actual
           editingNode = nullptr;
         }
@@ -466,6 +483,7 @@ void uiProcess(int8_t encDelta, bool encClick) {
           rangeEditingNode = nullptr;
           // Guardar inmediatamente al terminar edición de rango
           saveConfig();
+          logPrint("CONFIG","Guardado EEPROM (rango)");
           uiMode = UiViewMode::SUB_MENU;
         }
       }
