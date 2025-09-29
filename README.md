@@ -29,6 +29,9 @@ Controlador de motor paso a paso ESP32 para clasificadora de huevos con interfaz
 - 🔄 **Encoder rotatorio** para navegación y ajustes
 - 📱 **Control serial** completo via USB/UART
 - 💾 **Configuración persistente** en EEPROM
+- 🧭 **Menú jerárquico refactorizado** con edición inmediata y guardado condicional
+- ✨ **Splash animado** con tipeo de dos líneas y melodía de inicio
+- 🔊 **Sistema de beeps** diferenciados (navegación, retroceso, guardado, cambios en edición)
 
 ## 🛠️ Instalación
 
@@ -602,3 +605,76 @@ Pesaje
 
 ---
 *Sección agregada en rama `feature/new_menu_ui` (versión UI refactor preliminar).* 
+
+## ✨ Splash Animado & Branding
+El splash inicial ahora es completamente tipográfico (sin bitmap). Fases:
+1. Tipeo de "Orbis" carácter por carácter (primer frame solo 'O').
+2. Pausa de 1 segundo.
+3. Tipeo de segunda línea: "control by Betta".
+4. Ejecución de melodía de arranque (Do6–Mi6–Sol6) mientras se mantiene visible.
+5. Salida automática al finalizar retención.
+
+Parámetros (en `oled_ui.cpp`):
+```
+TYPE_INTERVAL_MS   = 90   // ms entre caracteres
+PAUSE_BETWEEN_MS   = 1000 // pausa entre líneas
+HOLD_MS            = 2000 // retención final tras melodía
+```
+
+El archivo viejo `splash_logo.h` quedó obsoleto y puede eliminarse con seguridad (se reemplazó por generación dinámica de texto).
+
+## 🔊 Sistema de Sonidos (Buzzer)
+Módulo en `buzzer.cpp / buzzer.h` con diferenciación de eventos:
+
+| Evento | Función | Frecuencia / Patrón | Bloqueante | Uso |
+|--------|---------|---------------------|------------|-----|
+| Navegación menú / mover selección | `beepNav()` | 3.8 kHz ~50 ms | No | Feedback ligero continuo |
+| Retroceder (`< Volver`) | `beepBack()` | 4.6 kHz (nav +800 Hz) | No | Diferenciar salida/subida nivel |
+| Guardado (valor o rango cambió) | `beepSave()` | 2.6 kHz ~80 ms | Sí | Confirmación clara (persistencia EEPROM) |
+| Ajuste de valor (scroll en edición) | `beepNav()` con throttle | 70 ms mínimo entre beeps | No | Evitar saturación sonora |
+| Melodía inicio | `startStartupMelody()` | Do6–Mi6–Sol6 (C6–E6–G6) | No | Branding / power-on |
+
+Throttle anti-spam en edición:
+```
+EDIT_BEEP_MIN_INTERVAL_MS = 70
+```
+
+La melodía de inicio es no bloqueante; se ejecuta mediante una pequeña máquina de estados en el `update()` del buzzer.
+
+## 💾 Guardado Condicional Inteligente
+Al editar valores (FLOAT / INT / ENUM) o rangos (RANGE_DEG):
+- Se toma un snapshot al entrar.
+- Se aplican cambios en vivo (feedback inmediato UI/motor).
+- Solo al salir de la fase ACTIVE (click tras finalizar la secuencia) se compara con el snapshot.
+- Si hay diferencias → se guarda en EEPROM (una sola escritura) y suena `beepSave()`.
+- Si NO cambió → no se escribe (previene desgaste flash y mantiene interfaz fluida).
+
+Beneficios:
+- Menos escrituras EEPROM innecesarias.
+- Menor latencia percibida.
+- Menor consumo energético por operación de escritura.
+
+## 🧠 Flujo de Edición Rápida
+VALUE_* (FLOAT/INT/ENUM):
+1. Entras ya en modo editable (sin paso intermedio).
+2. Giro = cambio inmediato + beep con throttle.
+3. Click → opciones [OK][Editar]; si cambió se guarda primero.
+4. OK sale (beep), Editar reinicia snapshot.
+
+RANGE_DEG:
+1. Start → End → Wrap (cada click avanza foco, beep por transición).
+2. Ajustes con giro (beep throttle); toggle wrap con giro.
+3. Al cerrar ciclo (tras Wrap + click) se guarda si cambió.
+4. Opciones [OK][Editar] igual que VALUE_*.
+
+## 🛠️ Efectos Secundarios Inmediatos
+ENUM especiales (ej: dirección maestra, S-Curve) aplican efectos en el momento del giro para retroalimentación instantánea (sin esperar la fase de guardado). Tras confirmarse el cambio persisten en EEPROM.
+
+## 🧪 Próximas Mejores (Ideas)
+- Modo silencioso (mutear beeps temporalmente).
+- Ajuste de tiempo HOLD splash vía menú.
+- Melodía configurable (tabla de notas + duración editable).
+- Validación visual de solapamiento entre sectores antes de guardar.
+
+---
+**Resumen UI (versión nueva):** Interfaz más reactiva (edición inmediata), reducción de escrituras EEPROM, feedback sonoro contextual y splash con identidad sonora.

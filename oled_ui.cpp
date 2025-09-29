@@ -8,6 +8,7 @@
 #include "homing.h"
 #include "ui_menu_model.h"
 #include "buzzer.h"
+// Splash ahora se genera tipográficamente (sin bitmap fijo)
 
 namespace App {
 
@@ -15,6 +16,23 @@ namespace App {
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(
   U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ SCL, /* data=*/ SDA
 );
+
+static bool splashActive = true;
+static uint32_t splashEndMs = 0; // ya no usado directamente, mantenido por compatibilidad
+// Nueva animación: fases
+enum class SplashPhase { TYPE_TITLE, PAUSE_BETWEEN, TYPE_SUB, MELODY_HOLD, DONE };
+static SplashPhase splashPhase = SplashPhase::TYPE_TITLE;
+static uint32_t splashPhaseStart = 0;
+static const char* SPLASH_TITLE = "Orbis";
+static const char* SPLASH_SUB_FULL = "control by Betta";
+static uint8_t typedChars = 0;           // cuenta actual de caracteres (reutilizada por ambas líneas)
+static uint32_t lastTypeMs = 0;
+static const uint32_t TYPE_INTERVAL_MS = 90; // velocidad de tipeo
+static uint32_t pauseStartMs = 0;        // inicio pausa entre líneas
+static const uint32_t PAUSE_BETWEEN_MS = 1000; // 1 segundo entre líneas
+static uint32_t holdStartMs = 0;         // inicio del hold final
+static const uint32_t HOLD_MS = 2000;    // 3 segundos después de melody
+static bool secondLineStarted = false;
 
 // -------------------- UI CONFIG --------------------
 static const uint8_t MARGIN_X   = 4;
@@ -73,11 +91,54 @@ static inline float enc_velocity_multiplier(float detents_per_s, int encDeltaAbs
 
 // Throttle de beep en scroll
 static uint32_t lastScrollBeepMs = 0;
+// Throttle para beeps al ajustar valores en edición
+static uint32_t lastEditValueBeepMs = 0;
+static uint32_t lastEditRangeBeepMs = 0;
+static const uint32_t EDIT_BEEP_MIN_INTERVAL_MS = 70; // ms mínimos entre beeps continuos
 
 // -------------------- DRAWING --------------------
 void oledInit() {
   u8g2.begin();
   u8g2.setFont(u8g2_font_6x10_tf);
+  // Mostrar splash inmediatamente
+  splashActive = true;
+  splashPhase = SplashPhase::TYPE_TITLE;
+  splashPhaseStart = millis();
+  typedChars = 1; // Mostrar solo 'O' en el primer frame
+  secondLineStarted = false;
+}
+
+static void drawSplash(){
+  u8g2.clearBuffer();
+  // Línea 1 (título) y línea 2 (subtítulo) con tipeo
+  if (splashPhase == SplashPhase::TYPE_TITLE || splashPhase == SplashPhase::PAUSE_BETWEEN || splashPhase == SplashPhase::TYPE_SUB || splashPhase == SplashPhase::MELODY_HOLD || splashPhase == SplashPhase::DONE){
+    // Título: mostrar todos los chars tipeados correspondientes a la primera palabra
+    u8g2.setFont(u8g2_font_logisoso28_tr);
+    size_t titleLen = strlen(SPLASH_TITLE);
+    size_t showTitle = 0;
+    if (splashPhase == SplashPhase::TYPE_TITLE){
+      showTitle = typedChars; if (showTitle > titleLen) showTitle = titleLen;
+    } else { showTitle = titleLen; }
+    char titleBuf[16]; strncpy(titleBuf, SPLASH_TITLE, showTitle); titleBuf[showTitle]='\0';
+    int tw = u8g2.getStrWidth(titleBuf);
+    int tx = (128 - tw)/2;
+    int tBaseline = 36; // un poco más arriba para dejar aire
+    u8g2.drawStr(tx, tBaseline, titleBuf);
+
+    // Subtítulo: solo después que la pausa termina
+    if (splashPhase == SplashPhase::TYPE_SUB || splashPhase == SplashPhase::MELODY_HOLD || splashPhase == SplashPhase::DONE){
+      u8g2.setFont(u8g2_font_6x10_tf);
+      size_t subLen = strlen(SPLASH_SUB_FULL);
+      size_t charsSub = typedChars; // reutilizamos typedChars pero al iniciar segunda línea se resetea
+      if (!secondLineStarted) charsSub = 0; // protección (no debería suceder)
+      if (charsSub > subLen) charsSub = subLen;
+      char subBuf[48]; strncpy(subBuf, SPLASH_SUB_FULL, charsSub); subBuf[charsSub]='\0';
+      int sw = u8g2.getStrWidth(subBuf);
+      int sx = (128 - sw)/2;
+      u8g2.drawStr(sx, 58, subBuf);
+    }
+  }
+  u8g2.sendBuffer();
 }
 
 static void drawStatusScreen() {
@@ -416,6 +477,7 @@ static void startEdit(const MenuNode& N){
   editSub = EditValueSubState::ACTIVE;
   optionsIndex = 0;
   editValueChanged = false;
+  Buzzer::beepNav(); // beep ingreso modo edición valor (garantizado incluso si llamada cambia en otra parte)
   // Snapshot inicial por tipo
   switch (N.type){
     case MenuNodeType::VALUE_FLOAT: editSnapshotFloat = *N.data.vf.ptr; break;
@@ -437,6 +499,7 @@ static void startRangeEdit(const MenuNode& N){
   rangeSnapEnd   = *N.data.rd.endPtr;
   rangeSnapWrap  = *N.data.rd.wrapsPtr;
   rangeChanged   = false;
+  Buzzer::beepNav(); // beep ingreso modo edición rango
 }
 
 static void applyDeltaToNode(const MenuNode& N, int8_t encDelta){
@@ -505,6 +568,7 @@ void uiProcess(int8_t encDelta, bool encClick) {
     // IMPORTANTE: retornamos para NO consumir este mismo click como "entrar al primer submenu"
     // así el usuario ve primero el menú raíz completo.
     return;
+    uint32_t nowBeep = millis();
   }
 
   switch (uiMode) {
@@ -534,9 +598,11 @@ void uiProcess(int8_t encDelta, bool encClick) {
           if (uiNav.stackCount==0 && N.label[0]=='<') {
             uiScreen = UiScreen::STATUS;
             uiMode = UiViewMode::MAIN_MENU; // modo listo para re-entrar
+            Buzzer::beepBack();
             return;
           } else {
             goBack();
+            Buzzer::beepBack();
           }
         } else if (N.type == MenuNodeType::ACTION) {
           if (nodeDisabled(N)) {
@@ -553,10 +619,10 @@ void uiProcess(int8_t encDelta, bool encClick) {
           }
         } else if (N.type == MenuNodeType::VALUE_FLOAT || N.type == MenuNodeType::VALUE_INT || N.type == MenuNodeType::VALUE_ENUM) {
           startEdit(N);
-          Buzzer::beepNav();
+          Buzzer::beepNav(); // beep al entrar a edición de valor
         } else if (N.type == MenuNodeType::RANGE_DEG) {
           startRangeEdit(N);
-          Buzzer::beepNav();
+          Buzzer::beepNav(); // beep al entrar a edición de rango
         }
       }
     } break;
@@ -586,12 +652,16 @@ void uiProcess(int8_t encDelta, bool encClick) {
         if (encDelta != 0){
           int ni = (int)optionsIndex + (encDelta>0?1:-1);
           if (ni < 0) ni = 1; if (ni > 1) ni = 0;
-          optionsIndex = (uint8_t)ni;
+          if ((uint8_t)ni != optionsIndex){
+            optionsIndex = (uint8_t)ni;
+            Buzzer::beepNav(); // beep al mover selección OK/Editar
+          }
         }
         if (encClick){
           if (optionsIndex == 0){ // OK salir
             editingNode = nullptr;
             uiMode = UiViewMode::SUB_MENU;
+            Buzzer::beepNav(); // beep al salir de edición valor
           } else if (optionsIndex == 1){ // Editar de nuevo
             // nuevo snapshot
             switch (editingNode->type){
@@ -601,6 +671,7 @@ void uiProcess(int8_t encDelta, bool encClick) {
               default: break;
             }
             editSub = EditValueSubState::ACTIVE;
+            Buzzer::beepNav(); // beep al volver a modo edición
           }
         }
       }
@@ -611,18 +682,26 @@ void uiProcess(int8_t encDelta, bool encClick) {
       const MenuNode& N = *rangeEditingNode;
       if (rangeSub == EditRangeSubState::ACTIVE){
         if (encDelta != 0){
+          bool changed = false;
           if (rangeFocus == 0){ // start
             float v = *N.data.rd.startPtr + (float)encDelta * 1.0f; // paso 1°
             if (v < -360.0f) v += 360.0f; if (v > 360.0f) v -= 360.0f;
-            *N.data.rd.startPtr = v;
+            *N.data.rd.startPtr = v; changed = true;
           } else if (rangeFocus == 1){ // end
             float v = *N.data.rd.endPtr + (float)encDelta * 1.0f;
             if (v < -360.0f) v += 360.0f; if (v > 360.0f) v -= 360.0f;
-            *N.data.rd.endPtr = v;
+            *N.data.rd.endPtr = v; changed = true;
           } else if (rangeFocus == 2){ // wrap toggle con giro
-            if (encDelta != 0){ *N.data.rd.wrapsPtr = !*N.data.rd.wrapsPtr; }
+            if (encDelta != 0){ *N.data.rd.wrapsPtr = !*N.data.rd.wrapsPtr; changed = true; }
           }
-          applyConfigToProfiles();
+            applyConfigToProfiles();
+            if (changed){
+              uint32_t nowR = millis();
+              if (nowR - lastEditRangeBeepMs >= EDIT_BEEP_MIN_INTERVAL_MS){
+                Buzzer::beepNav();
+                lastEditRangeBeepMs = nowR;
+              }
+            }
         }
         if (encClick){
           rangeFocus++;
@@ -647,12 +726,16 @@ void uiProcess(int8_t encDelta, bool encClick) {
         if (encDelta != 0){
           int ni = (int)rangeOptionsIndex + (encDelta>0?1:-1);
           if (ni < 0) ni = 1; if (ni > 1) ni = 0;
-          rangeOptionsIndex = (uint8_t)ni;
+          if ((uint8_t)ni != rangeOptionsIndex){
+            rangeOptionsIndex = (uint8_t)ni;
+            Buzzer::beepNav(); // beep al mover selección en opciones rango
+          }
         }
         if (encClick){
           if (rangeOptionsIndex == 0){ // OK salir
             rangeEditingNode = nullptr;
             uiMode = UiViewMode::SUB_MENU;
+            Buzzer::beepNav(); // beep al salir rango
           } else if (rangeOptionsIndex == 1){ // Editar nuevamente
             // refrescar snapshots
             rangeSnapStart = *N.data.rd.startPtr;
@@ -660,6 +743,7 @@ void uiProcess(int8_t encDelta, bool encClick) {
             rangeSnapWrap  = *N.data.rd.wrapsPtr;
             rangeFocus = 0;
             rangeSub = EditRangeSubState::ACTIVE;
+            Buzzer::beepNav(); // beep al volver a editar rango
           }
         }
       }
@@ -699,6 +783,51 @@ void uiProcess(int8_t encDelta, bool encClick) {
 }
 
 void uiRender() {
+  // Splash tiene prioridad absoluta al inicio
+  if (splashActive){
+    uint32_t now = millis();
+    switch (splashPhase){
+      case SplashPhase::TYPE_TITLE: {
+        if (now - lastTypeMs >= TYPE_INTERVAL_MS){
+          lastTypeMs = now;
+          size_t titleLen = strlen(SPLASH_TITLE);
+          if (typedChars < titleLen){ typedChars++; }
+          if (typedChars >= titleLen){
+            splashPhase = SplashPhase::PAUSE_BETWEEN;
+            pauseStartMs = now;
+            typedChars = 0; // preparar segunda línea
+          }
+        }
+      } break;
+      case SplashPhase::PAUSE_BETWEEN: {
+        if (now - pauseStartMs >= PAUSE_BETWEEN_MS){
+          splashPhase = SplashPhase::TYPE_SUB;
+          secondLineStarted = true;
+          lastTypeMs = now;
+        }
+      } break;
+      case SplashPhase::TYPE_SUB: {
+        if (now - lastTypeMs >= TYPE_INTERVAL_MS){
+          lastTypeMs = now;
+          if (typedChars < strlen(SPLASH_SUB_FULL)) typedChars++; else {
+            splashPhase = SplashPhase::MELODY_HOLD;
+            holdStartMs = now;
+            Buzzer::startStartupMelody();
+          }
+        }
+      } break;
+      case SplashPhase::MELODY_HOLD: {
+        if (now - holdStartMs >= HOLD_MS){
+          splashPhase = SplashPhase::DONE;
+          splashActive = false;
+          u8g2.setFont(u8g2_font_6x10_tf);
+        }
+      } break;
+      case SplashPhase::DONE: break;
+    }
+    drawSplash();
+    if (splashActive) return;
+  }
   if (uiScreen == UiScreen::STATUS && uiMode == UiViewMode::MAIN_MENU) {
     // Aún no se ha abierto la lista; mostrar status mientras tanto
     drawStatusScreen();

@@ -14,6 +14,26 @@ namespace Buzzer {
   static bool navActive = false;
   static uint32_t navEndMs = 0;
   static uint16_t navFreq = 0;
+  // Reutilizamos mismo estado para beepBack (simple); diferenciamos solo frecuencia
+  // Estado melody startup
+  static bool melodyActive = false;
+  static uint8_t melodyIndex = 0; // 0..N
+  static uint32_t melodyNextMs = 0;
+  struct Note { uint16_t freq; uint16_t dur; uint16_t gap; };
+  // Pequeña escala ascendente (puedes ajustar a gusto)
+  // MELODY de arranque:
+  // Notas escogidas: Do6, Mi6, Sol6 (tríada mayor de C) ascendente.
+  // Frecuencias aproximadas estándar temperamento igual:
+  //   Do6 (C6)  = 1046.50 Hz (~1047)
+  //   Mi6 (E6)  = 1318.51 Hz (~1319)
+  //   Sol6 (G6) = 1567.98 Hz (~1568)
+  // Duraciones: primeras dos cortas, última un poco más larga para cierre.
+  static const Note MELODY[] = {
+    { 1047, 90, 40 },  // Do6  (C6)
+    { 1319, 90, 40 },  // Mi6  (E6)
+    { 1568, 130, 0 }   // Sol6 (G6) cierre
+  };
+  static const uint8_t MELODY_LEN = sizeof(MELODY)/sizeof(MELODY[0]);
 
   void init(){
     if (initialized) return;
@@ -39,16 +59,46 @@ namespace Buzzer {
     navActive = true;
   }
 
+  void beepBack(){
+    if (!initialized) init();
+    // Frecuencia un poco mas aguda para diferenciar
+    navFreq = BUZZER_NAV_FREQ + 800; // +800 Hz (~4600 Hz)
+    const uint16_t dur = BUZZER_NAV_MS;
+    tone(PIN_BUZZER, navFreq, dur);
+    navEndMs = millis() + dur + 5;
+    navActive = true;
+  }
+
   void beepSave(){
     // Guardamos la semántica bloqueante para diferenciar claramente (confirmación fuerte)
     beep(2600, 80, 220);
   }
 
+  void startStartupMelody(){
+    if (!initialized) init();
+    melodyActive = true;
+    melodyIndex = 0;
+    melodyNextMs = 0; // ejecutar inmediata
+  }
+
   void update(){
-    if (!navActive) return;
-    if ((int32_t)(millis() - navEndMs) >= 0){
+    uint32_t now = millis();
+    // Gestion nav beep
+    if (navActive && (int32_t)(now - navEndMs) >= 0){
       noTone(PIN_BUZZER);
       navActive = false;
+    }
+    // Gestion melody
+    if (melodyActive){
+      if (melodyIndex >= MELODY_LEN){
+        melodyActive = false; return;
+      }
+      if ((int32_t)(now - melodyNextMs) >= 0){
+        const Note& N = MELODY[melodyIndex];
+        tone(PIN_BUZZER, N.freq, N.dur);
+        melodyNextMs = now + N.dur + N.gap;
+        melodyIndex++;
+      }
     }
   }
 }

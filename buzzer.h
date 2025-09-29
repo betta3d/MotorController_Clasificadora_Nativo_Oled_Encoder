@@ -11,9 +11,13 @@ namespace Buzzer {
   void beepNav();
   // Pip largo: guardado EEPROM o acción importante
   void beepSave();
+  // Beep al retroceder (más agudo)
+  void beepBack();
   // Beep genérico configurable (bloqueante)
   void beep(uint16_t freqHz, uint16_t ms, uint8_t volume = 255);
   // Actualización no bloqueante para beepNav (apaga automáticamente)
   void update();
+  // Melody de arranque (tres notas tipo DJI-lite) no bloqueante
+  void startStartupMelody();
   // Opción futura: cola no bloqueante
 }
