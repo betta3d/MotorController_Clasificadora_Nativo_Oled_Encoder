@@ -481,7 +481,6 @@ MENU (raíz)
 │  │  ├─ VUeltas    (VALUE_FLOAT) → -100.00 … 100.00 rev (paso 0.25)
 │  │  ├─ Ejecutar   (ACTION)      → Inicia rotación (si no homed primero homing)
 │  │  └─ < Volver   (BACK)
-│  ├─ SAVE          (ACTION)      → Guarda config en EEPROM
 │  ├─ DEFAULTS      (ACTION)      → Restaura valores por defecto
 │  └─ < Volver      (BACK)
 │
@@ -532,10 +531,10 @@ MENU (raíz)
 | Tipo          | Descripción | Interacción |
 |---------------|-------------|------------|
 | SUBMENU       | Contiene hijos | Click entra / < Volver sale |
-| VALUE_FLOAT   | Número flotante (min/max/step) | Girar ajusta / Click sale |
-| VALUE_INT     | Entero (min/max/step) | Girar ajusta / Click sale |
-| VALUE_ENUM    | Lista fija de labels | Girar cicla / Click sale |
-| RANGE_DEG     | Rango angular con wrap | Ciclo foco: Start→End→Wrap→OK |
+| VALUE_FLOAT   | Número flotante (min/max/step) | Edición directa al entrar (valor invertido). Click → opciones [OK][Editar]. |
+| VALUE_INT     | Entero (min/max/step) | Igual que VALUE_FLOAT. |
+| VALUE_ENUM    | Lista fija de labels | Igual que VALUE_FLOAT (giro cambia enum). |
+| RANGE_DEG     | Rango angular con wrap | Secuencia ACTIVE: Start→End→Wrap (valor invertido). Luego opciones [OK][Editar]. |
 | ACTION        | Ejecuta lógica inmediata | Click ejecuta |
 | PLACEHOLDER   | Sin acción (futuro o < Volver) | N/A |
 
@@ -544,17 +543,31 @@ MENU (raíz)
 |----------------|------------------|-----------|
 | STATUS          | Pantalla base | Estado sistema / ángulo / velocidad |
 | MAIN_MENU/SUB_MENU | Navegación | Lista de nodos |
-| EDIT_VALUE      | VALUE_* | Etiqueta + valor editable |
-| EDIT_RANGE      | RANGE_DEG | Start / End / Wrap / OK (foco cíclico) |
+| EDIT_VALUE      | VALUE_* | Sub-estados: ACTIVE (valor invertido), OPTIONS (barra [OK][Editar]) |
+| EDIT_RANGE      | RANGE_DEG | Sub-estados: ACTIVE (Start/End/Wrap con foco invertido secuencial), OPTIONS (barra [OK][Editar]) |
 | ACTION_EXEC     | Acción prolongada | Estado dinámico + tiempo + STOP |
 | FAULT_SCREEN    | SysState::FAULT | Mensaje de falla y retorno a menú |
 
-### Flujo EDIT_RANGE
-1. Click entra a rango.
-2. Foco inicial = Start: girar ±1° (wrap circular -360↔+360 simplificado).
-3. Click → End: ajustar igual que Start.
-4. Click → Wrap: girar (cualquier delta) alterna SI/NO.
-5. Click → OK: guarda y vuelve al submenú.
+### Flujo EDIT_VALUE (VALUE_FLOAT / VALUE_INT / VALUE_ENUM)
+1. Al entrar se inicia en estado ACTIVE: el valor aparece con inversión (fondo negro, texto blanco) y ya es editable.
+2. Girar encoder modifica directamente el valor (aplica en vivo a la configuración / perfiles).
+3. Click: se compara contra snapshot inicial; si cambió se guarda en EEPROM (solo entonces) y se registra log CONFIG.
+4. Se pasa a estado OPTIONS mostrando barra inferior con [OK] [Editar].
+5. Girar: alterna selección entre OK y Editar.
+6. Click en OK: se sale al submenú. Click en Editar: vuelve a ACTIVE con nuevo snapshot (permitiendo segundo ajuste).
+
+### Flujo EDIT_RANGE (RANGE_DEG)
+1. Al entrar: estado ACTIVE con foco en Start (invertido). Girar ajusta ±1° (con envolvente -360↔+360).
+2. Click avanza foco a End (invertido). Girar ajusta End igual que Start.
+3. Click avanza a Wrap. Girar (cualquier delta) conmuta SI/NO.
+4. Click desde foco Wrap: se evalúan cambios respecto al snapshot inicial; si hay diferencias se guardan en EEPROM una sola vez.
+5. Se entra a OPTIONS con barra [OK][Editar].
+6. Girar alterna opción; Click en OK sale al submenú; Click en Editar reinicia ciclo (nuevo snapshot, foco = Start).
+
+Notas:
+- Eliminado el antiguo paso explícito "OK" dentro del ciclo de focos; ahora la confirmación final sucede al transicionar a OPTIONS.
+- Guardado condicional: sin cambios → no se escribe EEPROM (reducción desgaste flash y latencia UI).
+- DIRECCION y S_CURVE mantienen efectos secundarios inmediatos (aplican al girar).
 
 ### Monitor de Acción
 - Se activa al lanzar HOME / ROTAR / RUN (si procede).
@@ -581,9 +594,11 @@ Pesaje
 ```
 
 ### Notas Internas
-- Actualización inmediata: Los VALUE_* aplican cambios en vivo (se puede optimizar para diferir hasta SAVE).
-- ENUMs especiales: MASTER_DIR y S_CURVE tienen efectos secundarios inmediatos (dirección y curvas S).
-- Validación sectores: Próxima mejora (evitar solapes incoherentes al editar rangos).
+- Guardado Condicional: EEPROM solo se escribe cuando el valor (o rango) difiere del snapshot al cerrar edición ACTIVE → OPTIONS.
+- VALUE_*: Cambios se aplican en vivo a perfiles para feedback inmediato; la persistencia se difiere hasta salida de ACTIVE.
+- RANGE_DEG: Proceso análogo con snapshot triple (start/end/wrap).
+- ENUMs especiales: MASTER_DIR y S_CURVE actualizan variables globales y recalculan perfiles inmediatamente.
+- Posible Mejora Futura: Validación de solapamiento entre sectores antes de aceptar rango (pendiente).
 
 ---
 *Sección agregada en rama `feature/new_menu_ui` (versión UI refactor preliminar).* 

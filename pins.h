@@ -19,6 +19,11 @@ constexpr int PIN_ENC_A      = 16; //CLOCK
 constexpr int PIN_ENC_B      = 17; //DT
 constexpr int PIN_ENC_BTN    = 13; //SW
 
+// Buzzer (piezo pasivo o activo) - conectar entre PIN_BUZZER y GND
+// Recomendado: resistencia serie 100-220 ohms + opcional capacitor 100nF a GND cerca del buzzer para reducir picos EMI.
+// Migrado a GPIO18 (no strapping) para mayor confiabilidad de tonos repetidos.
+constexpr int PIN_BUZZER     = 18;
+
 // I2C (OLED)
 constexpr int I2C_SDA = 21;
 constexpr int I2C_SCL = 22;

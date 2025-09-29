@@ -12,6 +12,7 @@
 #include "control.h"
 #include "commands.h"
 #include "commands_control.h"
+#include "buzzer.h"
 #include "logger.h"
 #include "homing.h"
 
@@ -30,6 +31,7 @@ void setup() {
   ioInit();           // pines, I2C y LEDs
   encoderInit();      // encoder por ISR
   oledInit();         // OLED
+  Buzzer::init();
   initNewMenuModel(); // Nuevo menú jerárquico
   controlStart();     // esp_timer 1 kHz
 
@@ -145,6 +147,7 @@ void loop() {
 
   uiProcess(d, click);   // procesa navegación/edición
   uiRender();            // dibuja la pantalla actual
+  Buzzer::update();      // gestiona beepNav no bloqueante
 
   // ===== COMANDOS SERIALES (delegado a commands.cpp) =====
   processCommands();
