@@ -46,6 +46,11 @@ void setDefaults() {
   Cfg.cfg_deg_lento_down = {170.0f, 190.0f, false};
   Cfg.cfg_deg_travel     = {190.0f, 350.0f, false};
 
+  // WiFi credenciales por defecto vacías
+  memset(Cfg.wifi_ssid, 0, sizeof(Cfg.wifi_ssid));
+  memset(Cfg.wifi_pass, 0, sizeof(Cfg.wifi_pass));
+  Cfg.wifi_valid = 0;
+
   Cfg.crc = 0; Cfg.crc = simpleCRC((uint8_t*)&Cfg, sizeof(Cfg)-sizeof(Cfg.crc));
 }
 
@@ -112,6 +117,8 @@ void saveConfig() {
   Cfg.cfg_deg_medio      = DEG_MEDIO;
   Cfg.cfg_deg_lento_down = DEG_LENTO_DOWN;
   Cfg.cfg_deg_travel     = DEG_TRAVEL;
+
+  // WiFi (mantener lo que haya en Cfg si ya estaba; nada que sincronizar runtime por ahora)
 
   Cfg.magic = CFG_MAGIC;
   Cfg.crc = 0;

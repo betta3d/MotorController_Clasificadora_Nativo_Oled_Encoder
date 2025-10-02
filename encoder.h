@@ -11,4 +11,7 @@ namespace App {
 
   // Lectura de click del pulsador integrado (con debounce)
   bool encoderReadClick();
+
+  // Estado actual crudo (true si presionado) sin debounce para long-press
+  bool encoderButtonPressedRaw();
 }

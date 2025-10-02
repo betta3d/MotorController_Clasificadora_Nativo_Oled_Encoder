@@ -15,6 +15,7 @@
 #include "buzzer.h"
 #include "logger.h"
 #include "homing.h"
+#include "wifi_manager.h"
 
 using namespace App;
 
@@ -34,6 +35,7 @@ void setup() {
   Buzzer::init();
   initNewMenuModel(); // Nuevo menú jerárquico
   controlStart();     // esp_timer 1 kHz
+  WifiMgr::init();    // WiFi manager (fase 1A)
 
   digitalWrite(PIN_STEP, LOW);
   setDirection(true); // Inicializar usando dirección maestra configurada
@@ -148,6 +150,7 @@ void loop() {
   uiProcess(d, click);   // procesa navegación/edición
   uiRender();            // dibuja la pantalla actual
   Buzzer::update();      // gestiona beepNav no bloqueante
+  WifiMgr::tick();       // estado WiFi
 
   // ===== COMANDOS SERIALES (delegado a commands.cpp) =====
   processCommands();

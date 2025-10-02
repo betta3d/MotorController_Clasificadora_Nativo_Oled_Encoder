@@ -47,6 +47,11 @@ struct Config {
   SectorRange cfg_deg_lento_down;
   SectorRange cfg_deg_travel;
 
+  // WiFi credenciales guardadas (simple)
+  char wifi_ssid[32];
+  char wifi_pass[32];
+  uint8_t wifi_valid; // 1 si credenciales válidas
+
   uint32_t crc;
 };
 extern Config Cfg;

@@ -8,6 +8,8 @@
 #include "homing.h"
 #include "ui_menu_model.h"
 #include "buzzer.h"
+#include "wifi_manager.h" // añadido arriba para evitar problemas de namespaces std dentro App
+#include "encoder.h"
 // Splash ahora se genera tipográficamente (sin bitmap fijo)
 
 namespace App {
@@ -148,7 +150,33 @@ static void drawStatusScreen() {
   const char* sect = sectorName(ang);
 
   u8g2.clearBuffer();
-  u8g2.drawStr(MARGIN_X, 10, "Control Movimientos");
+  // WiFi icon estilo arcs + texto estado
+  WifiMgr::State ws = WifiMgr::state();
+  int cx = MARGIN_X + 12; // centro aproximado icono
+  int cy = 12;
+  // Dibujar 3 arcos (aproximados con lines) estilo logo WiFi
+  auto arc = [&](int r1, int r2){
+    // r1 interno, r2 externo. Representamos medio arco inferior usando líneas horizontales de ancho creciente.
+    for (int y=0;y<(r2-r1);++y){
+      int ry = r1 + y;
+      int halfW = (int)( (float)ry * 1.2f ); // factor para expandir
+      u8g2.drawHLine(cx - halfW, cy + y, halfW*2+1);
+    }
+  };
+  if (ws == WifiMgr::State::CONNECTED){
+    arc(0,2); arc(3,5); arc(6,8);
+  } else if (ws == WifiMgr::State::CONNECTING){
+    uint32_t phase = (millis()/400)%3; // ilumina arco progresivo
+    if (phase>=0) arc(0,2);
+    if (phase>=1) arc(3,5);
+    if (phase>=2) arc(6,8);
+  } else {
+    // Disconnected: dibujar arcos + línea diagonal de corte
+    arc(0,2); arc(3,5); arc(6,8);
+    u8g2.drawLine(cx-10, cy-6, cx+10, cy+8);
+  }
+  const char* statusTxt = (ws==WifiMgr::State::CONNECTED)?"Conectado": (ws==WifiMgr::State::CONNECTING?"Conectando":"No Conectado");
+  u8g2.drawStr(MARGIN_X+28, 10, statusTxt);
 
   char line[40];
  snprintf(line, sizeof(line), "Estado: %s", stateName(state));
@@ -441,6 +469,154 @@ static void drawFaultScreen(){
   u8g2.sendBuffer();
 }
 
+// ========= WiFi UI (Fase 1B flujo amigable) =========
+#include "ui_menu_model.h"
+using WifiState = WifiMgr::State;
+static uint8_t wifiListIndex = 0; // índice seleccionado en lista
+static uint8_t wifiListOffset = 0; // para scroll
+static const uint8_t WIFI_LIST_MAX_VISIBLE = 5; // 5 líneas de redes + header
+
+// Password editor (simple versión inicial)
+static char wifiPassword[33] = {0};
+static uint8_t wifiPwLen = 0; // longitud actual
+static uint8_t wifiPwCursor = 0; // posición de edición
+static bool wifiPwEditing = true; // true: editando caracteres, false: foco en botones
+static uint8_t wifiPwButtonIndex = 0; // 0=OK 1=Clr 2=Editar
+static uint32_t lastClickMs = 0; // para doble click
+static const uint32_t DOUBLE_CLICK_WINDOW_MS = 350;
+static const char* PW_CHARSET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.:@#!?*$%&+/="" ";
+static int pwCharsetIndex = 0; // índice del char actual
+static uint32_t pwPressStartMs = 0; // para long press
+static const uint32_t PW_LONG_PRESS_MS = 600;
+static bool pwPressArmed = false; // requiere flanco para armar long press
+static uint32_t pwModeEnterMs = 0; // evita long press inmediato al entrar
+// Long press deshabilitado para evitar salto involuntario
+
+static char currentPwChar(){
+  size_t n = strlen(PW_CHARSET);
+  if (n==0) return '?';
+  if (pwCharsetIndex < 0) pwCharsetIndex = 0;
+  if (pwCharsetIndex >= (int)n) pwCharsetIndex = (int)n-1;
+  return PW_CHARSET[pwCharsetIndex];
+}
+
+static void drawWifiPwEdit(){
+  u8g2.clearBuffer();
+  u8g2.drawStr(MARGIN_X,10,"Password");
+  // Mostrar password en claro
+  char buf[40];
+  strncpy(buf, wifiPassword, sizeof(buf)-1); buf[sizeof(buf)-1]='\0';
+  u8g2.drawStr(MARGIN_X,24, buf);
+  // Cursor indicador
+  int cx = MARGIN_X + u8g2.getStrWidth(buf);
+  if (wifiPwEditing){
+    char c[2]={currentPwChar(),0};
+    u8g2.drawStr(cx,24,c);
+    u8g2.drawBox(cx-1,26, u8g2.getStrWidth(c)+2,1); // subrayado
+  }
+  // Botones
+  int yBtns = 50;
+  const char* okLbl = "[OK]";
+  const char* clrLbl = "[Clr]";
+  const char* edLbl = "[Editar]";
+  int okW = u8g2.getStrWidth(okLbl);
+  int clrW = u8g2.getStrWidth(clrLbl);
+  int edW = u8g2.getStrWidth(edLbl);
+  int totalW = okW + 4 + clrW + 4 + edW;
+  int startX = (128 - totalW)/2;
+  int xOk = startX;
+  int xClr = xOk + okW + 4;
+  int xEd = xClr + clrW + 4;
+  // OK
+  if (!wifiPwEditing && wifiPwButtonIndex==0){ u8g2.drawBox(xOk-2,yBtns-10, okW+4,11); u8g2.setDrawColor(0); }
+  u8g2.drawStr(xOk,yBtns, okLbl);
+  if (!wifiPwEditing && wifiPwButtonIndex==0){ u8g2.setDrawColor(1); }
+  // Clr
+  if (!wifiPwEditing && wifiPwButtonIndex==1){ u8g2.drawBox(xClr-2,yBtns-10, clrW+4,11); u8g2.setDrawColor(0); }
+  u8g2.drawStr(xClr,yBtns, clrLbl);
+  if (!wifiPwEditing && wifiPwButtonIndex==1){ u8g2.setDrawColor(1); }
+  // Editar
+  if (!wifiPwEditing && wifiPwButtonIndex==2){ u8g2.drawBox(xEd-2,yBtns-10, edW+4,11); u8g2.setDrawColor(0); }
+  u8g2.drawStr(xEd,yBtns, edLbl);
+  if (!wifiPwEditing && wifiPwButtonIndex==2){ u8g2.setDrawColor(1); }
+  u8g2.drawStr(MARGIN_X,62,"Click=Avanza Dbl=Back Min8");
+  u8g2.sendBuffer();
+}
+
+static void drawWifiScanning(){
+  u8g2.clearBuffer();
+  u8g2.drawStr(MARGIN_X,10,"WiFi Scan");
+  // animación simple puntos
+  uint8_t dots = (millis()/400)%4; char buf[16];
+  snprintf(buf,sizeof(buf),"Scanning%.*s", dots, "....");
+  u8g2.drawStr(MARGIN_X,28, buf);
+  u8g2.drawStr(MARGIN_X,54,"Back=Click");
+  u8g2.sendBuffer();
+}
+
+static void drawWifiList(){
+  u8g2.clearBuffer();
+  int total = WifiMgr::networkCount();
+  char hdr[32]; snprintf(hdr,sizeof(hdr),"Redes: %d", total);
+  u8g2.drawStr(MARGIN_X,10,hdr);
+  // ajustar offset si selección sale de ventana
+  if (wifiListIndex < wifiListOffset) wifiListOffset = wifiListIndex;
+  if (wifiListIndex >= wifiListOffset + WIFI_LIST_MAX_VISIBLE) wifiListOffset = wifiListIndex - WIFI_LIST_MAX_VISIBLE + 1;
+  for (uint8_t i=0;i<WIFI_LIST_MAX_VISIBLE;i++){
+    int idx = wifiListOffset + i;
+    if (idx >= total) break;
+    const char* ssid = WifiMgr::ssidAt(idx);
+    char line[20];
+    // recortar si largo>18
+    strncpy(line, ssid?ssid:"", 18); line[18]='\0';
+    int y = 24 + i*10; // starting y
+    if (idx == wifiListIndex){
+      u8g2.drawBox(0,y-8,128,10);
+      u8g2.setDrawColor(0);
+      u8g2.drawStr(MARGIN_X,y,line);
+      u8g2.setDrawColor(1);
+    } else {
+      u8g2.drawStr(MARGIN_X,y,line);
+    }
+  }
+  u8g2.drawStr(90,62,"OK=Click");
+  u8g2.sendBuffer();
+}
+
+static void drawWifiConnecting(){
+  u8g2.clearBuffer();
+  u8g2.drawStr(MARGIN_X,10,"Conectando");
+  const char* ssid = WifiMgr::ssidAt(WifiMgr::selectedIndex());
+  if (ssid){ u8g2.drawStr(MARGIN_X,24, ssid); }
+  uint8_t dots = (millis()/400)%4; char buf[16]; snprintf(buf,sizeof(buf),"...%.*s",dots,"....");
+  u8g2.drawStr(MARGIN_X,38, buf);
+  u8g2.drawStr(MARGIN_X,54,"Back=Click");
+  u8g2.sendBuffer();
+}
+
+static void drawWifiResult(){
+  u8g2.clearBuffer();
+  if (WifiMgr::state() == WifiState::CONNECTED){
+    u8g2.drawStr(MARGIN_X,12,"WiFi OK");
+    u8g2.drawStr(MARGIN_X,28, WifiMgr::ipStr());
+  } else {
+    u8g2.drawStr(MARGIN_X,12,"WiFi FAIL");
+    WifiMgr::FailReason fr = WifiMgr::failReason();
+    const char* msg = "";
+    switch (fr){
+      case WifiMgr::FailReason::SCAN_TIMEOUT: msg="Scan timeout"; break;
+      case WifiMgr::FailReason::SCAN_FAILED: msg="Scan failed"; break;
+      case WifiMgr::FailReason::CONNECT_TIMEOUT: msg="Conn timeout"; break;
+      case WifiMgr::FailReason::INVALID_PASSWORD: msg="Bad password"; break;
+      case WifiMgr::FailReason::NO_SSID: msg="SSID no disp"; break;
+      default: msg="Error"; break;
+    }
+    u8g2.drawStr(MARGIN_X,28,msg);
+  }
+  u8g2.drawStr(MARGIN_X,54,"Click=Volver");
+  u8g2.sendBuffer();
+}
+
 void initNewMenuModel(){
   uiMenuModelInit();
   uiMode = UiViewMode::MAIN_MENU;
@@ -448,6 +624,10 @@ void initNewMenuModel(){
 
 static void enterSubmenu(const MenuNode& N){
   if (uiNav.stackCount < 6){
+    // Log específico al entrar al submenu Internet
+    if (N.label && strcmp(N.label, "8. Internet")==0){
+      logPrint("WIFI","Entrando submenu Internet");
+    }
     uiNav.stack[uiNav.stackCount++] = &N;
     uiNav.currentList = N.children;
     uiNav.currentCount = N.childCount;
@@ -457,6 +637,13 @@ static void enterSubmenu(const MenuNode& N){
 
 static void goBack(){
   if (uiNav.stackCount==0){ uiMode = UiViewMode::MAIN_MENU; return; }
+  // Detectar si estamos saliendo del submenu Internet antes de hacer pop
+  if (uiNav.stackCount>0){
+    const MenuNode* leaving = uiNav.stack[uiNav.stackCount-1];
+    if (leaving && leaving->label && strcmp(leaving->label, "8. Internet")==0){
+      logPrint("WIFI","Saliendo submenu Internet");
+    }
+  }
   uiNav.stackCount--;
   if (uiNav.stackCount==0){
     uiNav.currentList = MAIN_MENU;
@@ -625,6 +812,154 @@ void uiProcess(int8_t encDelta, bool encClick) {
           Buzzer::beepNav(); // beep al entrar a edición de rango
         }
       }
+    } break;
+
+    case UiViewMode::WIFI_SCANNING: {
+      // Encoder no hace nada; click = cancelar/volver
+      if (encClick){
+        // cancelar si en progreso
+        if (WifiMgr::state() == WifiState::SCANNING){ /* no API cancelar scan async fácil; dejamos FAIL visual */ }
+        uiMode = UiViewMode::SUB_MENU; // regresar al menú previo
+      }
+      // transición automática a lista cuando SCAN_DONE
+      if (WifiMgr::state() == WifiState::SCAN_DONE){
+        wifiListIndex = 0; wifiListOffset = 0;
+        uiMode = UiViewMode::WIFI_LIST;
+      } else if (WifiMgr::state() == WifiState::FAIL){
+        uiMode = UiViewMode::WIFI_RESULT;
+      }
+    } break;
+
+    case UiViewMode::WIFI_LIST: {
+      int total = WifiMgr::networkCount(); if (total < 0) total = 0;
+      if (encDelta != 0 && total>0){
+        int ni = (int)wifiListIndex + (encDelta>0?1:-1);
+        if (ni < 0) ni = 0; if (ni >= total) ni = total-1;
+        if (ni != wifiListIndex){ wifiListIndex = (uint8_t)ni; Buzzer::beepNav(); }
+      }
+      if (encClick){
+        if (total==0){ uiMode = UiViewMode::WIFI_RESULT; }
+        else {
+          WifiMgr::selectNetwork(wifiListIndex);
+          // Ir al editor de password en lugar de conectar directo
+          uiMode = UiViewMode::WIFI_PW_EDIT;
+          // Armar contexto de password edit
+          wifiPwEditing = true; wifiPwButtonIndex = 0; pwPressStartMs = 0; pwPressArmed=false; pwModeEnterMs = millis();
+          wifiPwEditing = true; wifiPwButtonIndex = 0; // mantener foco en edición
+          Buzzer::beepNav();
+        }
+      }
+    } break;
+
+    case UiViewMode::WIFI_CONNECTING: {
+      if (encClick){
+        // permitir abortar → mostrar resultado FAIL
+        if (WifiMgr::state() == WifiState::CONNECTING){ WifiMgr::cancelConnect(); }
+        uiMode = UiViewMode::WIFI_RESULT;
+      }
+      if (WifiMgr::state() == WifiState::CONNECTED){ uiMode = UiViewMode::WIFI_RESULT; }
+      else if (WifiMgr::state() == WifiState::FAIL){ uiMode = UiViewMode::WIFI_RESULT; }
+    } break;
+
+    case UiViewMode::WIFI_RESULT: {
+      if (encClick){
+        // Tras resultado fallido relanzar scan automáticamente para comodidad
+        if (WifiMgr::state() == WifiState::FAIL){
+          WifiMgr::beginScan();
+          uiMode = UiViewMode::WIFI_SCANNING;
+        } else {
+          uiMode = UiViewMode::SUB_MENU; // éxito => volver
+        }
+      }
+    } break;
+
+    case UiViewMode::WIFI_PW_EDIT: {
+      // Encoder: si editando caracteres, giro arriba/abajo cambia char; giro izquierda/derecha mueve cursor? (usamos char cycler solamente)
+      if (wifiPwEditing){
+        if (encDelta != 0){
+          int n = (int)strlen(PW_CHARSET);
+          pwCharsetIndex += (encDelta>0?1:-1);
+          if (pwCharsetIndex < 0) pwCharsetIndex = n-1;
+          if (pwCharsetIndex >= n) pwCharsetIndex = 0;
+          Buzzer::beepNav();
+        }
+        // Long press detection
+        bool rawPressed = App::encoderButtonPressedRaw();
+        uint32_t nowLP = millis();
+        // Ignorar long press durante primeros 250ms tras entrar al modo
+        if (nowLP - pwModeEnterMs >= 250) {
+          if (rawPressed) {
+            if (!pwPressArmed) { pwPressArmed = true; pwPressStartMs = nowLP; }
+            else if (pwPressStartMs && nowLP - pwPressStartMs >= PW_LONG_PRESS_MS) {
+              wifiPwEditing = false; wifiPwButtonIndex = 0; pwPressStartMs = 0; pwPressArmed=false; Buzzer::beepNav();
+            }
+          } else {
+            // liberar
+            pwPressArmed = false; pwPressStartMs = 0;
+  // Long press removido
+  WifiMgr::State ws = WifiMgr::state();
+  if (ws == WifiMgr::State::CONNECTED){
+    const char* ssidTxt = WifiMgr::ssidAt(WifiMgr::selectedIndex());
+    if (!ssidTxt || !*ssidTxt){ ssidTxt = Cfg.wifi_ssid[0]? Cfg.wifi_ssid : "(?)"; }
+    char head[48]; snprintf(head,sizeof(head), "Wifi - %s", ssidTxt);
+    u8g2.drawStr(MARGIN_X,10, head);
+  } else if (ws == WifiMgr::State::CONNECTING){
+    u8g2.drawStr(MARGIN_X,10, "Wifi - Conectando");
+  } else {
+    u8g2.drawStr(MARGIN_X,10, "Sin conexion");
+  }
+          }
+        }
+        if (encClick){
+          uint32_t now = millis();
+          bool dbl = (now - lastClickMs) <= DOUBLE_CLICK_WINDOW_MS;
+          lastClickMs = now;
+          if (dbl){
+            // backspace
+            if (wifiPwLen > 0){
+              wifiPwLen--; wifiPassword[wifiPwLen]='\0';
+              Buzzer::beepBack();
+            }
+          } else {
+            // aceptar char actual si hay espacio
+            if (wifiPwLen < 32){
+              wifiPassword[wifiPwLen] = currentPwChar();
+              wifiPwLen++; wifiPassword[wifiPwLen]='\0';
+              Buzzer::beepNav();
+            }
+          }
+        }
+        // Long press -> cambiar a botones (simplificado: si password tiene al menos 1 char y encoder delta==0 por 600ms sin cambios? omitimos por ahora y dejamos transición vía rotación cuando lleno)
+      } else { // foco en botones
+        if (encDelta != 0){
+          int countBtns = 3;
+          int ni = (int)wifiPwButtonIndex + (encDelta>0?1:-1);
+          if (ni < 0) ni = countBtns-1; if (ni >= countBtns) ni = 0;
+          if (ni != (int)wifiPwButtonIndex){ wifiPwButtonIndex = (uint8_t)ni; Buzzer::beepNav(); }
+        }
+        if (encClick){
+          if (wifiPwButtonIndex == 0){
+            // OK -> iniciar conexión
+            if (wifiPwLen < 8){
+              // mínima longitud
+              Buzzer::beepError();
+            } else {
+              WifiMgr::startConnect(wifiPassword);
+              uiMode = UiViewMode::WIFI_CONNECTING;
+              // Confirmación con beepSave (acción importante)
+              Buzzer::beepSave();
+            }
+          } else if (wifiPwButtonIndex == 1){
+            // Clr
+            if (wifiPwLen > 0){ wifiPwLen = 0; wifiPassword[0]='\0'; Buzzer::beepBack(); }
+          } else if (wifiPwButtonIndex == 2){
+            // Editar
+            wifiPwEditing = true; Buzzer::beepNav();
+          } 
+        }
+      }
+      // Transición a modo botones si password llena y giro largo no usado: si len==32 y se hace click normal entra a botones
+      if (wifiPwEditing && wifiPwLen >= 32){ wifiPwEditing = false; wifiPwButtonIndex = 0; }
     } break;
 
     case UiViewMode::EDIT_VALUE: {
@@ -828,6 +1163,13 @@ void uiRender() {
     drawSplash();
     if (splashActive) return;
   }
+
+  // Render WiFi pantallas dedicadas
+  if (uiMode == UiViewMode::WIFI_SCANNING){ drawWifiScanning(); return; }
+  if (uiMode == UiViewMode::WIFI_LIST){ drawWifiList(); return; }
+  if (uiMode == UiViewMode::WIFI_CONNECTING){ drawWifiConnecting(); return; }
+  if (uiMode == UiViewMode::WIFI_RESULT){ drawWifiResult(); return; }
+  if (uiMode == UiViewMode::WIFI_PW_EDIT){ drawWifiPwEdit(); return; }
   if (uiScreen == UiScreen::STATUS && uiMode == UiViewMode::MAIN_MENU) {
     // Aún no se ha abierto la lista; mostrar status mientras tanto
     drawStatusScreen();

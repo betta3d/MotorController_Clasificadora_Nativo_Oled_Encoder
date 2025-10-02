@@ -68,7 +68,7 @@ SectorRange DEG_TRAVEL     = {190.0f, 350.0f, false}; // 190°-350° — retorno
 
 // Homing centralizado
 uint32_t TIEMPO_ESTABILIZACION_HOME = 2000; // 2 segundos
-float  DEG_OFFSET = 45.0f;                // 45 grados
+float  DEG_OFFSET = -5.0f;                // -5 grados
 // float V_HOME_CMPS = 3.0f; // cm/s - MOVIDO A homing.cpp
 
 // UI

@@ -84,4 +84,8 @@ bool encoderReadClick() {
   return click;
 }
 
+bool encoderButtonPressedRaw(){
+  return digitalRead(PIN_ENC_BTN) == HIGH; // activo en alto
+}
+
 } // namespace App

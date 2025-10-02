@@ -16,6 +16,7 @@ bool LOG_UI = true;            // Interfaz usuario
 bool LOG_RUN = true;           // Modo RUNNING
 bool LOG_WARNING = true;       // Advertencias
 bool LOG_CALIBRACION = true;   // Factores de corrección
+bool LOG_WIFI = true;          // Conectividad WiFi
 bool LOG_ALL = true;           // Control global - master switch
 
 // ===== IMPLEMENTACIÓN FUNCIONES =====
@@ -85,6 +86,8 @@ bool setLogEnabled(const String& category, bool enabled) {
     LOG_WARNING = enabled;
   } else if (cat == "CALIBRACION") {
     LOG_CALIBRACION = enabled;
+  } else if (cat == "WIFI") {
+    LOG_WIFI = enabled;
   } else if (cat == "ALL") {
     LOG_ALL = enabled;
   } else {
@@ -110,6 +113,7 @@ bool isLogEnabled(const String& category) {
   if (cat == "RUN") return LOG_RUN;
   if (cat == "WARNING") return LOG_WARNING;
   if (cat == "CALIBRACION") return LOG_CALIBRACION;
+  if (cat == "WIFI") return LOG_WIFI;
   if (cat == "ALL") return LOG_ALL;
   
   return false; // Categoría no encontrada
@@ -131,6 +135,7 @@ void showLogStatus() {
   Serial.printf("LOG_RUN: %s         - Modo RUNNING continuo\n", LOG_RUN ? "ON" : "OFF");
   Serial.printf("LOG_WARNING: %s     - Advertencias del sistema\n", LOG_WARNING ? "ON" : "OFF");
   Serial.printf("LOG_CALIBRACION: %s - Factores corrección y calibración\n", LOG_CALIBRACION ? "ON" : "OFF");
+  Serial.printf("LOG_WIFI: %s        - Conectividad WiFi (scan/conexión)\n", LOG_WIFI ? "ON" : "OFF");
   
   Serial.println("\n--- Comandos disponibles ---");
   Serial.println("LOG-[CATEGORIA]=ON/OFF  - Controla categoría específica");

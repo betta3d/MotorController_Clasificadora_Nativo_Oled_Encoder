@@ -3,6 +3,8 @@
 #include "eeprom_store.h"
 #include "homing.h"
 #include "motion.h"
+#include "wifi_manager.h" // IMPORTANTE: fuera del namespace App para no encapsular headers de Arduino en App::
+#include "logger.h"
 #include <math.h>
 
 namespace App {
@@ -90,6 +92,20 @@ static const MenuNode SUBMENU_PESAJE[] = {
   {"1. Stations", MenuNodeType::PLACEHOLDER,nullptr,0,{}},
   {"< Volver",    MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
 
+// ---- INTERNET (Fase 1A) ----
+// SSID enum dinámico (hasta 7 resultados + placeholder índice 0)
+static char WIFI_SSIDS[7][33]; // buffers persistentes (32 + null)
+static const char* WIFI_LABELS[8] = {"(scan)",
+  WIFI_SSIDS[0], WIFI_SSIDS[1], WIFI_SSIDS[2], WIFI_SSIDS[3], WIFI_SSIDS[4], WIFI_SSIDS[5], WIFI_SSIDS[6]
+};
+static uint8_t wifiEnumIndex = 0; // 0 = (scan) , 1..n = redes
+static void actWifiScan();
+static void actWifiStatus();
+static const MenuNode SUBMENU_INTERNET[] = {
+  {"1. Scan",     MenuNodeType::ACTION,    nullptr,0,{.act={actWifiScan}}},
+  {"2. Estado",   MenuNodeType::ACTION,    nullptr,0,{.act={actWifiStatus}}},
+  {"< Volver",    MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
+
 // Orden requerido por el usuario: Acciones primero
 static const MenuNode MAIN_MENU_LOCAL[] = {
   {"1. Acciones",    MenuNodeType::SUBMENU, SUBMENU_ACCIONES,    (uint8_t)(sizeof(SUBMENU_ACCIONES)/sizeof(MenuNode)), {}},
@@ -99,7 +115,8 @@ static const MenuNode MAIN_MENU_LOCAL[] = {
   {"5. Mecanica",    MenuNodeType::SUBMENU, SUBMENU_MEC,         (uint8_t)(sizeof(SUBMENU_MEC)/sizeof(MenuNode)), {}},
   {"6. Homing",      MenuNodeType::SUBMENU, SUBMENU_HOMING,      (uint8_t)(sizeof(SUBMENU_HOMING)/sizeof(MenuNode)), {}},
   {"7. Sectores",    MenuNodeType::SUBMENU, SUBMENU_SECTORES,    (uint8_t)(sizeof(SUBMENU_SECTORES)/sizeof(MenuNode)), {}},
-  {"8. Pesaje",      MenuNodeType::SUBMENU, SUBMENU_PESAJE,      (uint8_t)(sizeof(SUBMENU_PESAJE)/sizeof(MenuNode)), {}},
+  {"8. Internet",    MenuNodeType::SUBMENU, SUBMENU_INTERNET,    (uint8_t)(sizeof(SUBMENU_INTERNET)/sizeof(MenuNode)), {}},
+  {"9. Pesaje",      MenuNodeType::SUBMENU, SUBMENU_PESAJE,      (uint8_t)(sizeof(SUBMENU_PESAJE)/sizeof(MenuNode)), {}},
   {"< Salir",        MenuNodeType::PLACEHOLDER,nullptr,0, {}}, // salir al STATUS
 };
 
@@ -140,6 +157,40 @@ static void actDoRotate(){
   rotateMode = true;
   setDirection(value > 0);
   state = SysState::ROTATING;
+}
+
+// ---- Acciones WiFi ----
+static void actWifiScan(){
+  if (WifiMgr::beginScan()) {
+    logPrint("WIFI","SCAN solicitado");
+    uiMode = UiViewMode::WIFI_SCANNING;
+  }
+}
+static void actWifiStatus(){
+  auto st = WifiMgr::state();
+  switch (st){
+  case WifiMgr::State::IDLE: logPrint("WIFI","Estado: IDLE"); break;
+  case WifiMgr::State::SCANNING: logPrint("WIFI","Estado: SCANNING"); break;
+  case WifiMgr::State::SCAN_DONE: logPrintf("WIFI","SCAN_DONE %d redes", WifiMgr::networkCount()); break;
+  case WifiMgr::State::CONNECTING: logPrint("WIFI","Estado: CONNECTING"); break;
+  case WifiMgr::State::CONNECTED: logPrintf("WIFI","Conectado IP=%s", WifiMgr::ipStr()); break;
+  case WifiMgr::State::FAIL: logPrint("WIFI","Estado: FAIL"); break;
+  }
+  // Actualizar labels cuando scan listo
+  if (st == WifiMgr::State::SCAN_DONE){
+    int n = WifiMgr::networkCount();
+    if (n > 7) n = 7; // porque índice 0 reservado
+    for (int i=0;i<n;i++){
+      String s = WiFi.SSID(i);
+      strncpy(WIFI_SSIDS[i], s.c_str(), 32);
+      WIFI_SSIDS[i][32] = '\0';
+    }
+    logPrintf("WIFI","Listado redes (max 7 mostradas):");
+    for (int i=0;i<n;i++){
+      logPrintf("WIFI","  #%d %s", i, WIFI_SSIDS[i]);
+    }
+    if (n==0) logPrint("WIFI","(No se encontraron redes)" );
+  }
 }
 
 } // namespace App

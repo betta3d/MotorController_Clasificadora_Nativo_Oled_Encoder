@@ -1,3 +1,68 @@
+*Sección agregada en rama `feature/new_menu_ui` (versión UI refactor preliminar).* 
+## 🌐 Internet (Fase 1A - WiFi Básico)
+
+Esta primera fase añade un submenú "Internet" orientado a preparar la conectividad futura (Fases 1B y 2A–2C). Actualmente permite:
+
+| Opción       | Tipo       | Función | Estado actual |
+|--------------|------------|---------|---------------|
+| 1. Scan      | ACTION     | Inicia escaneo asíncrono de redes WiFi (STA) | Actualiza estado interno (no bloquea) |
+| 2. SSID      | VALUE_ENUM | Lista de redes encontradas (hasta 7) | Se rellena tras Scan + Estado |
+| 3. Conectar  | ACTION     | Intenta conectar usando SSID seleccionado | Password fija provisional: `cccccccc` |
+| 4. Estado    | ACTION     | Muestra por log el estado actual y (si SCAN_DONE) copia SSID a la lista | Necesario para refrescar lista (por ahora) |
+| < Volver     | BACK       | Regresa al menú anterior | — |
+
+### Flujo de Uso (Fase 1A)
+1. Abrir menú: `Internet` → seleccionar `Scan` (suena beep acción).
+2. Esperar ~2–4 s mientras se ejecuta el escaneo (no hay barra aún). Se puede seguir navegando.
+3. Entrar a `Estado` para forzar actualización de la lista: si el escaneo terminó, se loguea: `[WIFI] SCAN listo: N redes` y se cargan nombres.
+4. Ir a `SSID` y girar encoder: ahora aparecen entradas (índice 1..N). Índice 0 siempre es `(scan)` (placeholder).
+5. Seleccionar la red deseada (queda resaltada internamente por índice).
+6. Activar `Conectar`: se intenta conexión con password fija `cccccccc` y se loguea el intento.
+7. Revisar `Estado` nuevamente: mostrará `CONNECTED IP=...` o `FAIL`.
+
+### Estados Internos WiFi
+| Estado | Significado | Origen de transición |
+|--------|-------------|----------------------|
+| IDLE        | Sin escaneo activo / desconectado | Al iniciar módulo o tras reset | 
+| SCANNING    | Escaneo en progreso (asíncrono) | Al ejecutar `Scan` |
+| SCAN_DONE   | Escaneo completado, resultados disponibles | Cuando `scanComplete() >= 0` |
+| CONNECTING  | Intentando asociación / autenticación | Al ejecutar `Conectar` con SSID válido |
+| CONNECTED   | Conexión exitosa, IP disponible | `WiFi.status()==WL_CONNECTED` |
+| FAIL        | Falló escaneo o conexión | Error scan / `WL_CONNECT_FAILED` / `WL_NO_SSID_AVAIL` |
+
+### Limitaciones (Diseño intencional Fase 1A)
+- No se actualiza automáticamente la lista SSID tras terminar el scan: debes entrar a `Estado` para poblarla.
+- Password fija codificada (`cccccccc`).
+- No se guarda SSID ni password en EEPROM todavía.
+- No hay timeout explícito para salir de CONNECTING (depende del stack WiFi); se añadirá en Fase 1B.
+- No hay feedback visual en OLED aparte de logs serial (a mejorar en Fase 1B/2A).
+- Máximo 7 SSID listados (espacio UI). Se podrían paginar en el futuro.
+
+### Próximos Pasos (Fase 1B)
+- Tipo de nodo `VALUE_STRING` para password editable.
+- Persistencia EEPROM (último SSID + password).
+- Timeout conexión + reintento manual.
+- Acción "Olvidar credenciales".
+- Auto-refresco de lista al terminar el escaneo (sin entrar a Estado).
+- Indicador visual mínimo (icono o texto corto) en pantallas principales.
+
+### Posibles Errores / Diagnóstico
+| Síntoma | Causa probable | Acción |
+|---------|----------------|--------|
+| Lista sigue vacía tras Scan | No entraste a `Estado` aún | Abrir `Estado` para llenar labels |
+| FAIL tras Conectar | Password incorrecta (dummy) o señal débil | Esperar Fase 1B para password real / acercar router |
+| SCANNING muy largo (>8s) | Interferencia o bug ocasional | Reintentar Scan (estará permitido) |
+| CONNECTING sin cambio | Falta timeout | Se agregará en Fase 1B |
+
+### Internos Técnicos
+- Escaneo: `WiFi.scanNetworks(true)` asíncrono → se consulta periódicamente en `WifiMgr::tick()`.
+- Al completarse: `WiFi.scanComplete()` devuelve número de redes (>=0) o `WIFI_SCAN_FAILED`.
+- Al llamar `Estado` cuando `SCAN_DONE` copia los SSID a buffers `WIFI_SSIDS[i]` (char[33]) evitando punteros colgantes.
+- Conexión: `WiFi.begin(ssid, "cccccccc")` sin timeout propio aún.
+- IP caché sólo si `CONNECTED` (`ipStr()`).
+
+Esta documentación cubre solo Fase 1A. Las fases siguientes integrarán edición de password, persistencia y API HTTP (GET/POST) para sincronizar configuraciones.
+
 # MotorController Clasificadora con OLED y Encoder
 
 Controlador de motor paso a paso ESP32 para clasificadora de huevos con interfaz OLED, encoder rotatorio y control serial completo. Sistema modular con arquitectura por comandos separados por categorías.

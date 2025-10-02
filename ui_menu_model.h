@@ -48,7 +48,12 @@ enum class UiViewMode : uint8_t {
   ACTION_EXEC,
   ROTATE_EDIT,
   FAULT_SCREEN,
-  CONFIRM_GENERIC
+  CONFIRM_GENERIC,
+  WIFI_SCANNING,
+  WIFI_LIST,
+  WIFI_CONNECTING,
+  WIFI_RESULT,
+  WIFI_PW_EDIT
 };
 
 // Contexto de navegación

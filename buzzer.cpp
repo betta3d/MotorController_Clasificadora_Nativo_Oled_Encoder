@@ -74,6 +74,18 @@ namespace Buzzer {
     beep(2600, 80, 220);
   }
 
+  void beepError(){
+    // Tres pips rápidos de error; bloqueante intencional para enfatizar
+    if (!initialized) init();
+    const uint16_t f = 1800; // frecuencia más grave que nav/back
+    for (int i=0;i<3;i++){
+      tone(PIN_BUZZER, f, 45);
+      delay(55);
+      noTone(PIN_BUZZER);
+      // pequeña pausa entre pips (ya cubierta por delay vs dur)
+    }
+  }
+
   void startStartupMelody(){
     if (!initialized) init();
     melodyActive = true;

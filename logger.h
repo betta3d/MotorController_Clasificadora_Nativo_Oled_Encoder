@@ -25,6 +25,7 @@ extern bool LOG_UI;           // Interfaz usuario OLED/Encoder
 extern bool LOG_RUN;          // Modo RUNNING continuo
 extern bool LOG_WARNING;      // Advertencias del sistema
 extern bool LOG_CALIBRACION;  // Factores de corrección
+extern bool LOG_WIFI;         // Conectividad WiFi
 extern bool LOG_ALL;          // Control global (master switch)
 
 /**

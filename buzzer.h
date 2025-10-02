@@ -13,6 +13,8 @@ namespace Buzzer {
   void beepSave();
   // Beep al retroceder (más agudo)
   void beepBack();
+  // Triple beep de error (tres pips cortos)
+  void beepError();
   // Beep genérico configurable (bloqueante)
   void beep(uint16_t freqHz, uint16_t ms, uint8_t volume = 255);
   // Actualización no bloqueante para beepNav (apaga automáticamente)
