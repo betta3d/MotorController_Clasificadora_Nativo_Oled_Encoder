@@ -52,6 +52,10 @@ struct Config {
   char wifi_pass[32];
   uint8_t wifi_valid; // 1 si credenciales válidas
 
+  // Suavizado sectorial (S-curve lookahead)
+  float sector_lookahead_deg; // grados para empezar blending anticipado
+  float sector_decel_boost;   // multiplicador de A_MAX al frenar si distancia corta
+
   uint32_t crc;
 };
 extern Config Cfg;

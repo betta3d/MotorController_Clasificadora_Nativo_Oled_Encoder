@@ -18,38 +18,42 @@ void setDefaults() {
   Cfg.magic        = CFG_MAGIC;
   // Cinemática
   Cfg.cm_per_rev   = 20.0f;
-  Cfg.v_slow_cmps  = 7.0f;
+  Cfg.v_slow_cmps  = 5.0f;
   Cfg.v_med_cmps   = 12.0f;
-  Cfg.v_fast_cmps  = 20.0f;
-  Cfg.accel_cmps2  = 40.0f;
+  Cfg.v_fast_cmps  = 23.0f;
+  Cfg.accel_cmps2  = 60.0f;
   Cfg.jerk_cmps3   = 1500.0f;
   Cfg.enable_s_curve = true;  // S-curve habilitada por defecto
 
   // Homing
   Cfg.v_home_cmps  = 3.0f;
   Cfg.t_estab_ms   = 2000;
-  Cfg.deg_offset   = 45.0f;
-  Cfg.homing_switch_turns  = 0.70f;
+  Cfg.deg_offset   = 0.0f; // -5 grados por defecto
+  Cfg.homing_switch_turns  = 1.25f;
   Cfg.homing_timeout_turns = 1.40f;
 
   // Mecánica
   Cfg.motor_full_steps_per_rev = 200;
   Cfg.microstepping            = 16;
-  Cfg.gear_ratio               = 1.0f;
+  Cfg.gear_ratio               = 3.0f;
 
   // Dirección
   Cfg.master_dir_cw = true; // CW por defecto
 
   // Sectores por defecto (coinciden con globals.cpp)
-  Cfg.cfg_deg_lento_up   = {350.0f, 10.0f, true};
-  Cfg.cfg_deg_medio      = {10.0f, 170.0f, false};
-  Cfg.cfg_deg_lento_down = {170.0f, 190.0f, false};
-  Cfg.cfg_deg_travel     = {190.0f, 350.0f, false};
+  Cfg.cfg_deg_lento_up   = {340.0f, 20.0f, true};
+  Cfg.cfg_deg_medio      = {20.0f, 160.0f, false};
+  Cfg.cfg_deg_lento_down = {160.0f, 200.0f, false};
+  Cfg.cfg_deg_travel     = {200.0f, 340.0f, false};
 
   // WiFi credenciales por defecto vacías
   memset(Cfg.wifi_ssid, 0, sizeof(Cfg.wifi_ssid));
   memset(Cfg.wifi_pass, 0, sizeof(Cfg.wifi_pass));
   Cfg.wifi_valid = 0;
+
+  // Suavizado sectorial por defecto
+  Cfg.sector_lookahead_deg = 25.0f; // empezar 20° antes del borde
+  Cfg.sector_decel_boost   = 3;  // multiplicar A_MAX al frenar si distancia es corta
 
   Cfg.crc = 0; Cfg.crc = simpleCRC((uint8_t*)&Cfg, sizeof(Cfg)-sizeof(Cfg.crc));
 }
@@ -59,6 +63,8 @@ bool loadConfig() {
   if (Cfg.magic != CFG_MAGIC) return false;
   uint32_t crc = simpleCRC((uint8_t*)&Cfg, sizeof(Cfg)-sizeof(Cfg.crc));
   if (crc != Cfg.crc) return false;
+
+  // sector_lookahead_deg y sector_decel_boost ya vienen en Cfg; sin lógica adicional
 
   // Propagar a variables de runtime
   // Cinemática ya está en Cfg (v_slow/v_med/v_fast/accel/jerk)
