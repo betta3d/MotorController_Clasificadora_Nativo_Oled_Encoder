@@ -27,3 +27,6 @@ constexpr int PIN_BUZZER     = 18;
 // I2C (OLED)
 constexpr int I2C_SDA = 21;
 constexpr int I2C_SCL = 22;
+
+// Servo SG90 (PWM)
+constexpr int PIN_SERVO = 23; // seleccionar un pin PWM-capable

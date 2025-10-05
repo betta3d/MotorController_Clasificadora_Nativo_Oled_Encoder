@@ -8,7 +8,7 @@ namespace App {
 Config Cfg;
 
 // Parámetros homing adaptativo (se inicializan con defaults, luego loadConfig puede sobrescribir)
-float HOMING_SWITCH_TURNS = 0.70f;
+float HOMING_SWITCH_TURNS = 1.25f;
 float HOMING_TIMEOUT_TURNS = 1.40f;
 volatile uint32_t homingFaultCount = 0;
 

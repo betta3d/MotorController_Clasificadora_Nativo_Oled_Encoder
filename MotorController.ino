@@ -16,6 +16,8 @@
 #include "logger.h"
 #include "homing.h"
 #include "wifi_manager.h"
+#include "planner.h"
+#include "servo_manager.h"
 
 using namespace App;
 
@@ -36,6 +38,8 @@ void setup() {
   initNewMenuModel(); // Nuevo menú jerárquico
   controlStart();     // esp_timer 1 kHz
   WifiMgr::init();    // WiFi manager (fase 1A)
+  // Servo disabled (reverted): do not initialize to avoid any side-effects
+  // ServoMgr.init(PIN_SERVO);
 
   digitalWrite(PIN_STEP, LOW);
   setDirection(true); // Inicializar usando dirección maestra configurada
@@ -45,6 +49,45 @@ void setup() {
 
   // Inicializar sistema de logging
   initLogging();
+  // SERVO: logs deshabilitados por defecto (activarlos solo para diagnosticar)
+  App::setLogEnabled("SERVO", false);
+
+  // === Planner (modo sombra inicial) ===
+  {
+    App::PlannerConfig pcfg;
+    pcfg.max_accel = Cfg.accel_cmps2 * ((Cfg.cm_per_rev>0)? (stepsPerRev / Cfg.cm_per_rev):0); // convertir a pps^2
+    pcfg.max_jerk = Cfg.jerk_cmps3 * ((Cfg.cm_per_rev>0)? (stepsPerRev / Cfg.cm_per_rev):0);  // pps^3 (placeholder)
+    pcfg.junction_deviation = 0.0f; // aún sin uso
+    pcfg.segment_buffer_size = 8;
+      pcfg.max_accel = App::Cfg.accel_cmps2 * ( (App::stepsPerRev>0 && App::Cfg.cm_per_rev>0)? ( (float)App::stepsPerRev / App::Cfg.cm_per_rev ) : 0 );
+      if (pcfg.max_accel <= 0) pcfg.max_accel = 1000.0f; // valor seguro
+      pcfg.max_jerk = App::Cfg.jerk_cmps3; // conversión a pasos^3/s^3 se puede añadir si se usa
+      pcfg.junction_deviation = 0.0f; // aún no usado
+      pcfg.segment_buffer_size = App::Cfg.planner_buffer_size;
+      MotionPlanner.init(pcfg);
+
+    // Crear 4 segmentos base (una vuelta) según sectores actuales.
+    auto addSector=[&](const SectorRange& s, float cruise_v_cmps){
+      // Longitud angular del sector (considerando wrap)
+      float ang;
+      if (s.wraps) {
+        if (s.start <= s.end) ang = 360.0f; else ang = (360.0f - s.start) + s.end; // ex: 350-10 -> 20°
+      } else {
+        ang = (s.end - s.start);
+      }
+      if (ang < 0) ang += 360.0f;
+      float revs = ang / 360.0f;
+      float steps = revs * stepsPerRev;
+      float steps_per_cm = (Cfg.cm_per_rev>0)? (stepsPerRev / Cfg.cm_per_rev):0;
+      float cruise_pps = cruise_v_cmps * steps_per_cm;
+      MotionPlanner.enqueue(steps, cruise_pps);
+    };
+    addSector(DEG_LENTO_UP,   Cfg.v_slow_cmps);
+    addSector(DEG_MEDIO,      Cfg.v_med_cmps);
+    addSector(DEG_LENTO_DOWN, Cfg.v_slow_cmps);
+    addSector(DEG_TRAVEL,     Cfg.v_fast_cmps);
+    logPrint("PLANNER", "Planner shadow inicializado con 4 segmentos (1 vuelta)");
+  }
   
   logPrint("SYSTEM", "ESP32 + TB6600 — Proyecto modular listo.");
   logPrint("SYSTEM", "Seguridad: no inicia RUNNING hasta completar HOME.");
@@ -63,6 +106,8 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+  // Servo disabled (reverted): no update
+  // ServoMgr.update();
 
   // Botón HOME físico
   if (btnHomePhys() && (now - lastBtnHomeMs > DEBOUNCE_MS)) {
@@ -164,5 +209,18 @@ void loop() {
     float v_cmps = (steps_per_cm > 0.0f) ? (v / steps_per_cm) : 0.0f;
     logPrintf("TELEMETRIA", "STATE=%s | HOMED=%d | OPT_ACTIVE=%d | S-CURVE=%s | v=%.1f | a=%.1f | v_goal=%.1f | A_MAX=%.1f | J_MAX=%.1f | v_cmps=%.1f",
               stateName(state), homed ? 1 : 0, optActive() ? 1 : 0, Cfg.enable_s_curve ? "ON" : "OFF", v, a, v_goal, A_MAX, J_MAX, v_cmps);
+  }
+
+  // === Planner shadow sampling ===
+  // Cada 100 ms muestreamos la velocidad planificada para comparación.
+  static uint32_t lastPlannerMs = 0;
+  if (millis() - lastPlannerMs >= 100) {
+    lastPlannerMs = millis();
+    // Avanzar planner con dt acumulado aproximado (0.1s) sin afectar control.
+    float v_plan = MotionPlanner.step(0.1f);
+    // Mostrar comparación si hay movimiento o plan no vacío
+    if (!MotionPlanner.empty() || v_plan>0.1f) {
+      logPrintf("PLANNER_SHADOW", "v_plan=%.1f pps | v_goal=%.1f pps | v=%.1f", v_plan, v_goal, v);
+    }
   }
 }

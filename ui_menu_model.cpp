@@ -4,6 +4,7 @@
 #include "homing.h"
 #include "motion.h"
 #include "wifi_manager.h" // IMPORTANTE: fuera del namespace App para no encapsular headers de Arduino en App::
+#include "servo_manager.h"
 #include "logger.h"
 #include <math.h>
 
@@ -18,25 +19,23 @@ static void actRun();
 static void actStop();
 static void actSave();
 static void actDefaults();
+static void actServoExec();
+static void actServoLiveToggle();
 
 // ===== Submenús (se definen primero vacíos si hay dependencias cíclicas) =====
 
 // Declaraciones para sectores (se llenarán más adelante cuando integremos edición rango)
-extern bool dummyWrap; // placeholder si se necesita
+static uint8_t sCurveEnum = 0;    // 0=OFF 1=ON
 
 // ---------------- ENUM helpers ----------------
 static const char* MASTER_DIR_LABELS[] = {"CW","CCW"};
 static const char* SCURVE_LABELS[]     = {"OFF","ON"};
-
-// Nodos de submenús (definición parcial)
-// Submenú ROTAR: editar valor (float) y ejecutar
 static float rotateMenuTargetRevs = 1.0f; // buffer UI (no altera rotateTargetRevs hasta ejecutar)
 static void actDoRotate();
 static const MenuNode SUBMENU_ROTAR[] = {
-  {"1. Vueltas",  MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&rotateMenuTargetRevs,-100.0f,100.0f,0.25f,"rev"}}},
+  {"1. Vueltas",  MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&rotateMenuTargetRevs,-100.0f,100.0f,0.5f,"rev"}}},
   {"2. Ejecutar", MenuNodeType::ACTION,nullptr,0,{.act={actDoRotate}}},
   {"< Volver",    MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
-
 static const MenuNode SUBMENU_ACCIONES[] = {
   {"1. Home",      MenuNodeType::ACTION,    nullptr,0, {.act={actHome}}},
   {"2. Run",       MenuNodeType::ACTION,    nullptr,0, {.act={actRun}}},
@@ -57,19 +56,56 @@ static const MenuNode SUBMENU_ACEL[] = {
   {"2. Jerk",  MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&Cfg.jerk_cmps3,1.0f,50000.0f,10.0f,"cm/s3"}}},
   {"< Volver", MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
 
+  // bool newSC = (sCurveEnum == 1);
+  // if (newSC != Cfg.enable_s_curve) {
+  //   Cfg.enable_s_curve = newSC;
+  //   logPrintf("CFG","S-Curve %s", newSC?"ON":"OFF");
+  // }
+// Planner submenu (limpio)
+#include "planner.h"
+static uint8_t plannerEnableEnum = 1; // 0=OFF 1=ON
+static const char* ONOFF_LABELS[] = {"OFF","ON"};
+static int32_t plannerBufSizeProxy = 8; // edición
+static const MenuNode SUBMENU_PLANNER[] = {
+  {"1. Enable", MenuNodeType::VALUE_ENUM, nullptr,0,{.ve={ &plannerEnableEnum, ONOFF_LABELS,2}}},
+  {"2. Buffer", MenuNodeType::VALUE_INT,  nullptr,0,{.vi={ &plannerBufSizeProxy,4,32,1,"seg"}}},
+  {"< Volver",  MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
+
+// Hook para sincronizar valores antes de mostrar y aplicar cambios después de edición
+void plannerMenuSyncLoad() {
+  plannerEnableEnum = Cfg.planner_enabled ? 1 : 0;
+  plannerBufSizeProxy = Cfg.planner_buffer_size;
+}
+
+void plannerMenuSyncStore() {
+  bool newEnable = (plannerEnableEnum == 1);
+  if (newEnable != Cfg.planner_enabled) {
+    Cfg.planner_enabled = newEnable;
+    logPrintf("CFG","Planner %s", newEnable?"ON":"OFF");
+  }
+  int newBuf = plannerBufSizeProxy;
+  if (newBuf < 4) newBuf = 4; if (newBuf > 32) newBuf = 32;
+  if (newBuf != Cfg.planner_buffer_size) {
+    Cfg.planner_buffer_size = (uint8_t)newBuf;
+    App::MotionPlanner.reset((uint8_t)newBuf); // requiere API reset(size)
+    logPrintf("CFG","Planner buffer=%d", newBuf);
+  }
+}
+
 static uint8_t masterDirEnum = 0; // 0=CW 1=CCW (se sincroniza en init)
-static uint8_t sCurveEnum = 0;    // 0=OFF 1=ON
 
 static const MenuNode SUBMENU_MOV[] = {
   {"1. Master Dir", MenuNodeType::VALUE_ENUM,nullptr,0,{.ve={&masterDirEnum, MASTER_DIR_LABELS, 2}}},
   {"2. S Curve",    MenuNodeType::VALUE_ENUM,nullptr,0,{.ve={&sCurveEnum,     SCURVE_LABELS,     2}}},
+  {"3. Lookahead",  MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={ &Cfg.sector_lookahead_deg,0.0f,90.0f,1.0f,"deg"}}},
+  {"4. DecelBoost", MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={ &Cfg.sector_decel_boost,1.0f,5.0f,0.1f,"x"}}},
   {"< Volver",      MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
 
 static const MenuNode SUBMENU_MEC[] = {
   {"1. Cm Per Rev",  MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&Cfg.cm_per_rev,0.1f,500.0f,0.1f,"cm/rev"}}},
   {"2. Motor Steps",  MenuNodeType::VALUE_INT,  nullptr,0,{.vi={ (int32_t*)&MOTOR_FULL_STEPS_PER_REV, 20, 2000, 1, "steps"}}},
   {"3. Microstep",    MenuNodeType::VALUE_INT,  nullptr,0,{.vi={ (int32_t*)&MICROSTEPPING,1,256,1,"x"}}},
-  {"4. Gear Ratio",   MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&GEAR_RATIO,0.01f,50.0f,0.01f,"ratio"}}},
+  {"4. Gear Ratio",   MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&GEAR_RATIO,0.0f,50.0f,0.5f,"ratio"}}},
   {"< Volver",        MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
 
 static const MenuNode SUBMENU_HOMING[] = {
@@ -98,6 +134,25 @@ static char WIFI_SSIDS[7][33]; // buffers persistentes (32 + null)
 static const char* WIFI_LABELS[8] = {"(scan)",
   WIFI_SSIDS[0], WIFI_SSIDS[1], WIFI_SSIDS[2], WIFI_SSIDS[3], WIFI_SSIDS[4], WIFI_SSIDS[5], WIFI_SSIDS[6]
 };
+
+// ===== Servo submenu =====
+static float servoAngle = 90.0f;     // [deg]
+static float servoVelMmS = 10.0f;    // [mm/s] (si mm/deg no configurado, se interpreta como deg/s)
+static uint8_t servoLiveEnum = 0;    // 0=OFF 1=ON
+static int32_t servoMinUsVar = 544;  // proxies editables desde UI
+static int32_t servoMaxUsVar = 2400;
+static uint8_t servoTestEnum = 0;    // 0=OFF 1=ON
+static const char* LIVE_LABELS[] = {"OFF","ON"};
+static const char* TEST_LABELS[] = {"OFF","ON"};
+static const MenuNode SUBMENU_SERVO[] = {
+  {"1. Angulo",  MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&servoAngle,0.0f,180.0f,1.0f,"deg"}}},
+  {"2. Vel",     MenuNodeType::VALUE_FLOAT,nullptr,0,{.vf={&servoVelMmS,0.1f,200.0f,0.1f,"mm/s"}}},
+  {"3. Ejecutar",MenuNodeType::ACTION,nullptr,0,{.act={actServoExec}}},
+  {"4. Live",    MenuNodeType::VALUE_ENUM,nullptr,0,{.ve={ &servoLiveEnum, LIVE_LABELS, 2}}},
+  {"5. Min uS",  MenuNodeType::VALUE_INT,nullptr,0,{.vi={ &servoMinUsVar, 300, 3000, 10, "us"}}},
+  {"6. Max uS",  MenuNodeType::VALUE_INT,nullptr,0,{.vi={ &servoMaxUsVar, 500, 3000, 10, "us"}}},
+  {"7. Test",    MenuNodeType::VALUE_ENUM,nullptr,0,{.ve={ &servoTestEnum, TEST_LABELS, 2}}},
+  {"< Volver",   MenuNodeType::PLACEHOLDER,nullptr,0,{}}};
 static uint8_t wifiEnumIndex = 0; // 0 = (scan) , 1..n = redes
 static void actWifiScan();
 static void actWifiStatus();
@@ -115,8 +170,10 @@ static const MenuNode MAIN_MENU_LOCAL[] = {
   {"5. Mecanica",    MenuNodeType::SUBMENU, SUBMENU_MEC,         (uint8_t)(sizeof(SUBMENU_MEC)/sizeof(MenuNode)), {}},
   {"6. Homing",      MenuNodeType::SUBMENU, SUBMENU_HOMING,      (uint8_t)(sizeof(SUBMENU_HOMING)/sizeof(MenuNode)), {}},
   {"7. Sectores",    MenuNodeType::SUBMENU, SUBMENU_SECTORES,    (uint8_t)(sizeof(SUBMENU_SECTORES)/sizeof(MenuNode)), {}},
-  {"8. Internet",    MenuNodeType::SUBMENU, SUBMENU_INTERNET,    (uint8_t)(sizeof(SUBMENU_INTERNET)/sizeof(MenuNode)), {}},
-  {"9. Pesaje",      MenuNodeType::SUBMENU, SUBMENU_PESAJE,      (uint8_t)(sizeof(SUBMENU_PESAJE)/sizeof(MenuNode)), {}},
+  {"8. Planner",     MenuNodeType::SUBMENU, SUBMENU_PLANNER,     (uint8_t)(sizeof(SUBMENU_PLANNER)/sizeof(MenuNode)), {}},
+  // {"9. Servo",       MenuNodeType::SUBMENU, SUBMENU_SERVO,       (uint8_t)(sizeof(SUBMENU_SERVO)/sizeof(MenuNode)), {}},
+  {"10. Internet",   MenuNodeType::SUBMENU, SUBMENU_INTERNET,    (uint8_t)(sizeof(SUBMENU_INTERNET)/sizeof(MenuNode)), {}},
+  {"11. Pesaje",     MenuNodeType::SUBMENU, SUBMENU_PESAJE,      (uint8_t)(sizeof(SUBMENU_PESAJE)/sizeof(MenuNode)), {}},
   {"< Salir",        MenuNodeType::PLACEHOLDER,nullptr,0, {}}, // salir al STATUS
 };
 
@@ -131,7 +188,13 @@ void uiMenuModelInit() {
   // Sincronizar enums
   masterDirEnum = master_direction ? 0 : 1; // 0=CW 1=CCW
   sCurveEnum = Cfg.enable_s_curve ? 1 : 0;
+  plannerMenuSyncLoad();
+  // Servo disabled (reverted): don't touch servo state on init
 }
+
+// Exponer funciones para ser llamadas por la UI cuando se entra/sale del submenú Planner
+void uiPlannerEnter(){ plannerMenuSyncLoad(); }
+void uiPlannerLeave(){ plannerMenuSyncStore(); saveConfig(); }
 
 // ===== Acciones básicas (implementación mínima por ahora) =====
 static void actHome(){ startCentralizedHoming(); }
@@ -157,6 +220,21 @@ static void actDoRotate(){
   rotateMode = true;
   setDirection(value > 0);
   state = SysState::ROTATING;
+}
+
+static void actServoExec(){
+  // Ejecutar movimiento del servo a servoAngle con velocidad servoVelMmS
+  logPrintf("SERVO","Ejecutar: ang=%.1f vel=%.1f (unid=%s)", servoAngle, servoVelMmS, "auto");
+  // Aplicar rango editado antes de mover
+  uint16_t mi = (uint16_t)servoMinUsVar; uint16_t ma = (uint16_t)servoMaxUsVar;
+  if (mi >= 300 && ma <= 3000 && mi < ma) ServoMgr.setPulseRange(mi, ma);
+  ServoMgr.setOutputEnabled(true);
+  ServoMgr.setTargetAngle(servoAngle, servoVelMmS);
+}
+
+static void actServoLiveToggle(){
+  ServoMgr.setLive(servoLiveEnum==1);
+  logPrintf("SERVO","Live=%s", (servoLiveEnum==1)?"ON":"OFF");
 }
 
 // ---- Acciones WiFi ----

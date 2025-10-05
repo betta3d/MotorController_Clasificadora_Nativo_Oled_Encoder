@@ -10,6 +10,7 @@
 #include "buzzer.h"
 #include "wifi_manager.h" // añadido arriba para evitar problemas de namespaces std dentro App
 #include "encoder.h"
+#include "servo_manager.h"
 // Splash ahora se genera tipográficamente (sin bitmap fijo)
 
 namespace App {
@@ -284,23 +285,82 @@ static bool    editValueChanged  = false; // se setea al pasar de ACTIVE -> OPTI
 static uint8_t optionsIndex = 0;          // 0=OK 1=Editar
 
 static void drawValueEdit(const MenuNode& N) {
+  // Special layout for Servo "Ángulo": show set value inline next to label and telemetry as a list
+  auto icontains = [](const char* hay, const char* needle){
+    if (!hay || !needle) return false; size_t nlen=strlen(needle);
+    for (const char* p=hay; *p; ++p){ size_t i=0; while(i<nlen && p[i] && tolower((unsigned char)p[i])==tolower((unsigned char)needle[i])) ++i; if (i==nlen) return true; }
+    return false;
+  };
+  bool isServoAngle = (N.type == MenuNodeType::VALUE_FLOAT) && (icontains(N.label, "angulo") || icontains(N.label, "ángulo"));
+
+  if (isServoAngle) {
+    u8g2.clearBuffer();
+    // Header: "Ángulo: <valor> deg" on the same line
+    char hdr[48];
+    float vset = *N.data.vf.ptr;
+    snprintf(hdr, sizeof(hdr), "%s: %5.1f %s", N.label, vset, N.data.vf.unit?N.data.vf.unit:"");
+    u8g2.drawStr(MARGIN_X, 10, hdr);
+
+    // Telemetry list
+    char line[64];
+    bool live = ServoMgr.live();
+    int pin = ServoMgr.gpio();
+    bool ledc = ServoMgr.usingLEDC();
+    int ch = ServoMgr.ledcChannel();
+    float angC = ServoMgr.angle();
+    float angT = ServoMgr.target();
+    uint32_t usC = ServoMgr.currentPulseUs();
+
+    // 1) Live
+    snprintf(line, sizeof(line), "- Live: %s", live?"ON":"OFF");
+    u8g2.drawStr(MARGIN_X, 22, line);
+    // 2) Pin / PWM backend
+  if (ledc) snprintf(line, sizeof(line), "- Pin: %d   PWM: LEDC%d", pin, ch);
+  else      snprintf(line, sizeof(line), "- Pin: %d   PWM: MCPWM",  pin);
+    u8g2.drawStr(MARGIN_X, 34, line);
+    // 3) Angulo actual -> objetivo
+    snprintf(line, sizeof(line), "- Ang: %5.1f -> %5.1f", angC, angT);
+    u8g2.drawStr(MARGIN_X, 46, line);
+    // 4) Pulso actual en microsegundos
+    snprintf(line, sizeof(line), "- Pulso: %lu us", (unsigned long)usC);
+    // Si estamos en OPTIONS, dejamos espacio para los botones: subimos la lista una línea
+    uint8_t pulseY = (editSub == EditValueSubState::OPTIONS) ? 46 : 58;
+    // Si movimos la anterior a 46 por OPTIONS, reubicar pulso en 58; si no, va en 58 por defecto
+    pulseY = 58;
+    u8g2.drawStr(MARGIN_X, pulseY, line);
+
+    // OPTIONS buttons if in OPTIONS mode
+    if (editSub == EditValueSubState::OPTIONS) {
+      const char* optOk = "OK"; const char* optEd = "Editar";
+      uint8_t y = 58; // botones en la última línea
+      uint8_t xOk = MARGIN_X;
+      uint8_t okw = u8g2.getStrWidth(optOk) + 4;
+      uint8_t xEd = xOk + okw + 10;
+      uint8_t edw = u8g2.getStrWidth(optEd) + 4;
+      if (optionsIndex == 0) {
+        u8g2.drawBox(xOk-2, y-(FONT_H-2), okw, FONT_H);
+        u8g2.setDrawColor(0); u8g2.drawStr(xOk, y, optOk); u8g2.setDrawColor(1);
+      } else { u8g2.drawStr(xOk, y, optOk); }
+      if (optionsIndex == 1) {
+        u8g2.drawBox(xEd-2, y-(FONT_H-2), edw, FONT_H);
+        u8g2.setDrawColor(0); u8g2.drawStr(xEd, y, optEd); u8g2.setDrawColor(1);
+      } else { u8g2.drawStr(xEd, y, optEd); }
+    }
+    u8g2.sendBuffer();
+    return;
+  }
+
+  // Default layout for other values (legacy)
   u8g2.clearBuffer();
   u8g2.drawStr(MARGIN_X, 10, N.label);
   char val[48];
   switch (N.type) {
-    case MenuNodeType::VALUE_FLOAT: {
-      float v = *N.data.vf.ptr; snprintf(val,sizeof(val),"%6.2f %s", v, N.data.vf.unit?N.data.vf.unit:"");
-    } break;
-    case MenuNodeType::VALUE_INT: {
-      int32_t v = *N.data.vi.ptr; snprintf(val,sizeof(val),"%ld %s", (long)v, N.data.vi.unit?N.data.vi.unit:"");
-    } break;
-    case MenuNodeType::VALUE_ENUM: {
-      uint8_t idx = *N.data.ve.ptr; if (idx >= N.data.ve.count) idx = 0; const char* lbl = N.data.ve.labels[idx]; snprintf(val,sizeof(val),"< %s >", lbl);
-    } break;
+    case MenuNodeType::VALUE_FLOAT: { float v = *N.data.vf.ptr; snprintf(val,sizeof(val),"%6.2f %s", v, N.data.vf.unit?N.data.vf.unit:""); } break;
+    case MenuNodeType::VALUE_INT:   { int32_t v = *N.data.vi.ptr; snprintf(val,sizeof(val),"%ld %s", (long)v, N.data.vi.unit?N.data.vi.unit:""); } break;
+    case MenuNodeType::VALUE_ENUM:  { uint8_t idx = *N.data.ve.ptr; if (idx >= N.data.ve.count) idx = 0; const char* lbl = N.data.ve.labels[idx]; snprintf(val,sizeof(val),"< %s >", lbl); } break;
     default: snprintf(val,sizeof(val),"?"); break;
   }
-  uint8_t vy = 34;
-  uint8_t vw = u8g2.getStrWidth(val);
+  uint8_t vy = 34; uint8_t vw = u8g2.getStrWidth(val);
   if (editSub == EditValueSubState::ACTIVE) {
     u8g2.drawBox(MARGIN_X - 2, vy - (FONT_H - 2), vw + 4, FONT_H);
     u8g2.setDrawColor(0); u8g2.drawStr(MARGIN_X, vy, val); u8g2.setDrawColor(1);
@@ -309,19 +369,9 @@ static void drawValueEdit(const MenuNode& N) {
   }
   if (editSub == EditValueSubState::OPTIONS) {
     const char* optOk = "OK"; const char* optEd = "Editar";
-    uint8_t y = 58;
-    uint8_t xOk = MARGIN_X;
-    uint8_t okw = u8g2.getStrWidth(optOk) + 4;
-    uint8_t xEd = xOk + okw + 10;
-    uint8_t edw = u8g2.getStrWidth(optEd) + 4;
-    if (optionsIndex == 0) {
-      u8g2.drawBox(xOk-2, y-(FONT_H-2), okw, FONT_H);
-      u8g2.setDrawColor(0); u8g2.drawStr(xOk, y, optOk); u8g2.setDrawColor(1);
-    } else { u8g2.drawStr(xOk, y, optOk); }
-    if (optionsIndex == 1) {
-      u8g2.drawBox(xEd-2, y-(FONT_H-2), edw, FONT_H);
-      u8g2.setDrawColor(0); u8g2.drawStr(xEd, y, optEd); u8g2.setDrawColor(1);
-    } else { u8g2.drawStr(xEd, y, optEd); }
+    uint8_t y = 58; uint8_t xOk = MARGIN_X; uint8_t okw = u8g2.getStrWidth(optOk) + 4; uint8_t xEd = xOk + okw + 10; uint8_t edw = u8g2.getStrWidth(optEd) + 4;
+    if (optionsIndex == 0) { u8g2.drawBox(xOk-2, y-(FONT_H-2), okw, FONT_H); u8g2.setDrawColor(0); u8g2.drawStr(xOk, y, optOk); u8g2.setDrawColor(1);} else { u8g2.drawStr(xOk, y, optOk);}    
+    if (optionsIndex == 1) { u8g2.drawBox(xEd-2, y-(FONT_H-2), edw, FONT_H); u8g2.setDrawColor(0); u8g2.drawStr(xEd, y, optEd); u8g2.setDrawColor(1);} else { u8g2.drawStr(xEd, y, optEd);}  
   }
   u8g2.sendBuffer();
 }
@@ -700,6 +750,20 @@ static void applyDeltaToNode(const MenuNode& N, int8_t encDelta){
       if (v > N.data.vf.maxV) v = N.data.vf.maxV;
       *N.data.vf.ptr = v;
       applyConfigToProfiles();
+      // If this is the Servo angle and Live mode is ON, nudge immediately
+      if (editingNode == &N) {
+        auto icontains = [](const char* hay, const char* needle){
+          if (!hay || !needle) return false; size_t nlen=strlen(needle);
+          for (const char* p=hay; *p; ++p){ size_t i=0; while(i<nlen && p[i] && tolower((unsigned char)p[i])==tolower((unsigned char)needle[i])) ++i; if (i==nlen) return true; }
+          return false;
+        };
+        if (icontains(N.label, "angulo") || icontains(N.label, "ángulo")){
+          if (ServoMgr.live()){
+            // Command absolute angle so value and position stay in sync
+            ServoMgr.setTargetAngleAbsolute(v);
+          }
+        }
+      }
     } break;
     case MenuNodeType::VALUE_INT: {
       int32_t v = *N.data.vi.ptr;

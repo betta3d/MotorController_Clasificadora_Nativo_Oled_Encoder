@@ -1,6 +1,7 @@
 #include "buzzer.h"
 #include "pins.h"
 #include <Arduino.h>
+#include "servo_manager.h"
 
 // Diseño hardware sugerido:
 // Usar un buzzer pasivo o piezo entre PIN_BUZZER y GND.
@@ -45,6 +46,8 @@ namespace Buzzer {
     if (!initialized) init();
     if (freqHz < 50) freqHz = 50; if (freqHz > 10000) freqHz = 10000;
     (void)volume; // volumen no aplicable con tone()
+    // Evitar interferir con servo en vivo (uso de timers LEDC por tone)
+    if (App::ServoMgr.live()) return;
     tone(PIN_BUZZER, freqHz, ms);
     delay(ms);
     noTone(PIN_BUZZER);
@@ -52,6 +55,7 @@ namespace Buzzer {
 
   void beepNav(){
     if (!initialized) init();
+    if (App::ServoMgr.live()) return; // no interferir en Live
     navFreq = BUZZER_NAV_FREQ;
     const uint16_t dur = BUZZER_NAV_MS;
     tone(PIN_BUZZER, navFreq, dur);
@@ -61,6 +65,7 @@ namespace Buzzer {
 
   void beepBack(){
     if (!initialized) init();
+    if (App::ServoMgr.live()) return; // no interferir en Live
     // Frecuencia un poco mas aguda para diferenciar
     navFreq = BUZZER_NAV_FREQ + 800; // +800 Hz (~4600 Hz)
     const uint16_t dur = BUZZER_NAV_MS;
@@ -77,6 +82,7 @@ namespace Buzzer {
   void beepError(){
     // Tres pips rápidos de error; bloqueante intencional para enfatizar
     if (!initialized) init();
+    if (App::ServoMgr.live()) return; // no interferir en Live
     const uint16_t f = 1800; // frecuencia más grave que nav/back
     for (int i=0;i<3;i++){
       tone(PIN_BUZZER, f, 45);

@@ -18,6 +18,8 @@ bool LOG_WARNING = true;       // Advertencias
 bool LOG_CALIBRACION = true;   // Factores de corrección
 bool LOG_WIFI = true;          // Conectividad WiFi
 bool LOG_ALL = true;           // Control global - master switch
+bool LOG_PLANNER = true;       // Planner diagnostics
+bool LOG_SERVO = true;         // Servo diagnostics
 
 // ===== IMPLEMENTACIÓN FUNCIONES =====
 
@@ -88,6 +90,10 @@ bool setLogEnabled(const String& category, bool enabled) {
     LOG_CALIBRACION = enabled;
   } else if (cat == "WIFI") {
     LOG_WIFI = enabled;
+  } else if (cat == "PLANNER" || cat == "PLNQ" || cat == "PLNS" || cat == "CTRL") {
+    LOG_PLANNER = enabled; // Treat specific planner sub-tags as PLANNER umbrella
+  } else if (cat == "SERVO") {
+    LOG_SERVO = enabled;
   } else if (cat == "ALL") {
     LOG_ALL = enabled;
   } else {
@@ -114,6 +120,8 @@ bool isLogEnabled(const String& category) {
   if (cat == "WARNING") return LOG_WARNING;
   if (cat == "CALIBRACION") return LOG_CALIBRACION;
   if (cat == "WIFI") return LOG_WIFI;
+  if (cat == "PLANNER" || cat == "PLNQ" || cat == "PLNS" || cat == "CTRL") return LOG_PLANNER;
+  if (cat == "SERVO") return LOG_SERVO;
   if (cat == "ALL") return LOG_ALL;
   
   return false; // Categoría no encontrada
@@ -136,6 +144,8 @@ void showLogStatus() {
   Serial.printf("LOG_WARNING: %s     - Advertencias del sistema\n", LOG_WARNING ? "ON" : "OFF");
   Serial.printf("LOG_CALIBRACION: %s - Factores corrección y calibración\n", LOG_CALIBRACION ? "ON" : "OFF");
   Serial.printf("LOG_WIFI: %s        - Conectividad WiFi (scan/conexión)\n", LOG_WIFI ? "ON" : "OFF");
+  Serial.printf("LOG_PLANNER: %s     - Diagnósticos del planificador (PLNQ/PLNS/CTRL)\n", LOG_PLANNER ? "ON" : "OFF");
+  Serial.printf("LOG_SERVO: %s       - Diagnósticos del servo SG90\n", LOG_SERVO ? "ON" : "OFF");
   
   Serial.println("\n--- Comandos disponibles ---");
   Serial.println("LOG-[CATEGORIA]=ON/OFF  - Controla categoría específica");

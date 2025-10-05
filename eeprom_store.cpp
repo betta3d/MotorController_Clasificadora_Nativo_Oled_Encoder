@@ -55,6 +55,10 @@ void setDefaults() {
   Cfg.sector_lookahead_deg = 25.0f; // empezar 20° antes del borde
   Cfg.sector_decel_boost   = 3;  // multiplicar A_MAX al frenar si distancia es corta
 
+  // Planner
+  Cfg.planner_enabled      = true;
+  Cfg.planner_buffer_size  = 8; // default
+
   Cfg.crc = 0; Cfg.crc = simpleCRC((uint8_t*)&Cfg, sizeof(Cfg)-sizeof(Cfg.crc));
 }
 
@@ -65,6 +69,9 @@ bool loadConfig() {
   if (crc != Cfg.crc) return false;
 
   // sector_lookahead_deg y sector_decel_boost ya vienen en Cfg; sin lógica adicional
+  // Planner flags ya vienen; sanitizar
+  if (Cfg.planner_buffer_size < 4) Cfg.planner_buffer_size = 4;
+  if (Cfg.planner_buffer_size > 32) Cfg.planner_buffer_size = 32;
 
   // Propagar a variables de runtime
   // Cinemática ya está en Cfg (v_slow/v_med/v_fast/accel/jerk)
@@ -123,6 +130,7 @@ void saveConfig() {
   Cfg.cfg_deg_medio      = DEG_MEDIO;
   Cfg.cfg_deg_lento_down = DEG_LENTO_DOWN;
   Cfg.cfg_deg_travel     = DEG_TRAVEL;
+  // Planner (ya en Cfg; no runtime mirror por ahora)
 
   // WiFi (mantener lo que haya en Cfg si ya estaba; nada que sincronizar runtime por ahora)
 

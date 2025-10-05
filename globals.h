@@ -56,6 +56,10 @@ struct Config {
   float sector_lookahead_deg; // grados para empezar blending anticipado
   float sector_decel_boost;   // multiplicador de A_MAX al frenar si distancia corta
 
+  // Planner avanzado
+  bool  planner_enabled;      // true=usar planner distancia, false=modo sector/blending
+  uint8_t planner_buffer_size; // tamaño buffer segmentos (ej 8..16)
+
   uint32_t crc;
 };
 extern Config Cfg;

@@ -27,6 +27,8 @@ extern bool LOG_WARNING;      // Advertencias del sistema
 extern bool LOG_CALIBRACION;  // Factores de corrección
 extern bool LOG_WIFI;         // Conectividad WiFi
 extern bool LOG_ALL;          // Control global (master switch)
+extern bool LOG_PLANNER;      // Planner (segment enqueue / step diagnostics)
+extern bool LOG_SERVO;        // Servo (SG90 control / PWM diagnostics)
 
 /**
  * @brief Imprime mensaje con categoría si está habilitada

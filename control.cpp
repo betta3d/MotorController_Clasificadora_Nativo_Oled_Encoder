@@ -3,6 +3,8 @@
 #include "motion.h"
 #include "pins.h"
 #include "logger.h"
+#include "planner.h"
+#include "pattern_planner.h"
 #include <Arduino.h>
 #include <esp_timer.h>
 
@@ -29,18 +31,101 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
   const float dt    = (float)CONTROL_DT_US * 1e-6f;
   const float dt_us = (float)CONTROL_DT_US;
 
+  // === Planner activo (sustituye v_goal sectorial) ===
+  static bool plannerActive = true; // gate para pruebas; se podría mover a config
+
+  // Helpers internos para alimentar el planner con segmentos sectoriales cíclicos
+  auto sectorLengthDeg = [](const SectorRange& s)->float {
+    if (s.wraps) return (360.0f - s.start) + s.end; else return (s.end - s.start);
+  };
+  auto remainingDegInSector = [](float deg, const SectorRange& s)->float {
+    // deg normalizado asumido
+    if (s.wraps) {
+      if (deg >= s.start) {
+        return (360.0f - deg) + s.end; // parte alta hasta 360 + hasta end
+      } else { // deg <= end
+        return s.end - deg;
+      }
+    } else {
+      // Sector normal (no envuelve): restante hasta el final del sector.
+      if (deg <= s.end) return s.end - deg; // asumiendo deg >= s.start
+      return 0.0f; // fuera de rango, nada restante
+    }
+  };
+  auto sectorCruiseCmps = [&](int idx)->float {
+    switch(idx){
+      case 0: return Cfg.v_slow_cmps; // LENTO_UP
+      case 1: return Cfg.v_med_cmps;  // MEDIO
+      case 2: return Cfg.v_slow_cmps; // LENTO_DOWN
+      case 3: return Cfg.v_fast_cmps; // TRAVEL
+    }
+    return Cfg.v_slow_cmps;
+  };
+  auto getSectorByIndex = [&](int idx)->const SectorRange& {
+    switch(idx){
+      case 0: return DEG_LENTO_UP; case 1: return DEG_MEDIO; case 2: return DEG_LENTO_DOWN; default: return DEG_TRAVEL; }
+  };
+  auto currentSectorIndex = [&](float deg)->int {
+    if (inSectorRange(deg, DEG_LENTO_UP)) return 0;
+    if (inSectorRange(deg, DEG_MEDIO)) return 1;
+    if (inSectorRange(deg, DEG_LENTO_DOWN)) return 2;
+    if (inSectorRange(deg, DEG_TRAVEL)) return 3;
+    return 0;
+  };
+  auto enqueueSectorSegment = [&](float deg, int idx, bool remainder){
+    const SectorRange& s = getSectorByIndex(idx);
+    float steps_per_cm = (Cfg.cm_per_rev>0)? (stepsPerRev / Cfg.cm_per_rev):0;
+    float cruise_pps = sectorCruiseCmps(idx) * steps_per_cm;
+    float ang = remainder ? remainingDegInSector(deg, s) : sectorLengthDeg(s);
+    // Filtrar restos minúsculos para evitar micro perfiles iniciales
+    const float MIN_REMAINDER_DEG =  (remainder ? 360.0f * 100.0f/stepsPerRev : 0.01f); // ~100 steps como mínimo si remainder
+    if (ang < MIN_REMAINDER_DEG) return;
+    float steps = (ang/360.0f) * stepsPerRev;
+    MotionPlanner.enqueue(steps, cruise_pps);
+  };
+
+  // Transiciones de estado para flush del planner al salir de RUN/ROT y limpiar cola obsoleta
+  static SysState lastState = SysState::UNHOMED; // estado inicial conocido
+  bool enteringRun =  (state == SysState::RUNNING || state == SysState::ROTATING) && !(lastState == SysState::RUNNING || lastState == SysState::ROTATING);
+  bool leavingRun  = !(state == SysState::RUNNING || state == SysState::ROTATING) &&  (lastState == SysState::RUNNING || lastState == SysState::ROTATING);
+  if (enteringRun) {
+    MotionPlanner.flush(); // empezamos cola limpia para nueva fase de producción de segmentos
+  }
+  if (leavingRun) {
+    MotionPlanner.flush(); // descartar cualquier segmento remanente
+  }
+  lastState = state;
+
+  auto feedPlanner = [&](float deg){
+    // Alimenta segmentos manteniendo un mínimo sencillo; priming eliminado
+    static int lastRemainderSector = -1;
+    if (!plannerActive) return;
+    if (state != SysState::RUNNING && state != SysState::ROTATING) return;
+    const uint8_t MIN_FILL = 4; // buffer objetivo simple
+    int cs = currentSectorIndex(deg);
+    if (lastRemainderSector != cs && MotionPlanner.size() < MIN_FILL) {
+      enqueueSectorSegment(deg, cs, true);
+      lastRemainderSector = cs;
+    }
+    int next = (cs + 1) % 4;
+    while (MotionPlanner.size() < MIN_FILL) {
+      enqueueSectorSegment(deg, next, false);
+      next = (next + 1) % 4;
+    }
+  };
+
   switch (state) {
     case SysState::RUNNING: {
       // Movimiento continuo por sectores hasta STOP o FAULT
       // Siempre usamos la dirección maestra lógica para RUNNING.
-      applySectorBasedMovement(true);
+      applySectorBasedMovement(true); // establece A_MAX/J_MAX y v_goal sectorial base
     } break;
 
     case SysState::ROTATING: {
       // Movimiento por N vueltas específicas con misma lógica de sectores
       // Usa la dirección según rotateDirection (true=positivo=maestra, false=inversa)
       bool useMasterSel = rotateDirection ? true : false;
-      applySectorBasedMovement(useMasterSel);
+  applySectorBasedMovement(useMasterSel);
       
       // DEBUG: Mostrar estado cada 100 ticks (0.1 segundos)
       static uint32_t debugCounter = 0;
@@ -57,6 +142,21 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
       break;
     }
 
+    case SysState::STOPPING: {
+      // Parada suave: fijar v_goal=0 pero mantener A_MAX/J_MAX razonables para permitir rampa de frenado
+      v_goal = 0.0f;
+      // Convertir accel/jerk de cm a pasos
+      float steps_per_cm = (Cfg.cm_per_rev > 0.0f) ? ((float)stepsPerRev / Cfg.cm_per_rev) : 0.0f;
+      float a_stop = Cfg.accel_cmps2 * steps_per_cm;
+      float j_stop = Cfg.jerk_cmps3  * steps_per_cm; // jerk en pps^3
+      // En caso de configuración inválida, usar un mínimo para no quedar sin rampa
+      if (a_stop <= 0.0f) a_stop = 1.0f;
+      if (j_stop <= 0.0f) j_stop = 100.0f;
+      A_MAX = a_stop;
+      J_MAX = j_stop;
+      // No llamamos forceStopTarget() aquí para no anular A_MAX/J_MAX
+    } break;
+
     case SysState::FAULT:
       // Parada de emergencia: resetea inmediatamente la cinemática.
       v = 0.0f;
@@ -69,9 +169,35 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
       break;
   }
 
+  // === Planner activo: sustituir v_goal si procede ===
+  bool plannerUsed = false;
+  // Nuevo: pattern planner (prioridad sobre ring planner si enabled)
+  Pattern.setEnabled(Cfg.planner_enabled); // reusar flag existente por ahora
+  Pattern.service();
+  if (Pattern.enabled() && (state == SysState::RUNNING || state == SysState::ROTATING)) {
+    float v_plan = Pattern.stepVelocity();
+    if (v_plan > 0.0f) {
+      v_goal = v_plan;
+      plannerUsed = true;
+    }
+  } else if (Cfg.planner_enabled && (state == SysState::RUNNING || state == SysState::ROTATING) && state != SysState::HOMING_SEEK) {
+    float degNow = currentAngleDeg();
+    feedPlanner(degNow);
+    if (!MotionPlanner.empty()) {
+      float v_plan = MotionPlanner.step(dt);
+      v_goal = v_plan;
+      plannerUsed = true;
+    }
+#if PLANNER_DIAG
+    static uint32_t dbgCtrl=0; if ((++dbgCtrl % 250)==0) {
+      logPrintf("CTRL","deg=%.1f v_goal=%.1f v=%.1f A=%.0f segs=%d", degNow, v_goal, v, A_MAX, MotionPlanner.size());
+    }
+#endif
+  }
+
   // S-curve jerk-limited (condicional según configuración)
   // IMPORTANTE: Durante HOMING_SEEK forzamos control directo para evitar A_MAX/J_MAX=0
-  if (Cfg.enable_s_curve && state != SysState::HOMING_SEEK) {
+  if (!plannerUsed && Cfg.enable_s_curve && state != SysState::HOMING_SEEK) {
     // S-curve habilitada (para RUNNING y ROTATING)
     float sign   = (v < v_goal) ? +1.0f : (v > v_goal ? -1.0f : 0.0f);
     float a_goal = sign * A_MAX;
@@ -83,8 +209,12 @@ static void IRAM_ATTR controlTick(void* /*arg*/) {
 
     v += a * dt;
     if (v < 0.0f) v = 0.0f;
-  } else {
+  } else if (!plannerUsed) {
     // Control directo sin S-curve (homing y cuando S-curve está OFF)
+    v = v_goal;
+    a = 0.0f;
+  } else if (plannerUsed) {
+    // Planner ya entrega v_goal suavizado, aplicamos directamente
     v = v_goal;
     a = 0.0f;
   }
@@ -171,7 +301,7 @@ namespace App {
 
 static inline bool isMovingState() {
   return (state == SysState::RUNNING || state == SysState::ROTATING ||
-          state == SysState::HOMING_SEEK);
+          state == SysState::HOMING_SEEK || state == SysState::STOPPING);
 }
 
 static void IRAM_ATTR stepOffTick(void* /*arg*/) {
@@ -182,11 +312,12 @@ static void IRAM_ATTR stepOffTick(void* /*arg*/) {
 static void IRAM_ATTR stepOnTick(void* /*arg*/) {
   // Leer velocidad actual y estado
   float v_now = v;
+  if (v_now < 0.0f) v_now = 0.0f; // solo clamp inferior
 
-  // Límite de seguridad para no sobrecargar el planificador: 20 kpps
-  const float MAX_PPS = 20000.0f;
-  if (v_now < 0.0f) v_now = 0.0f;
-  if (v_now > MAX_PPS) v_now = MAX_PPS;
+  // Impedir pasos durante priming (planner aún construyendo cola)
+  extern bool planner_enabled_dummy; // placeholder to avoid warning if needed
+  // Usamos variable estática compartida via lambda capture no accesible aquí, replicamos lógica mínima:
+  // No tenemos acceso directo a plannerPriming aquí (static local). Movemos su efecto: si v==0 y RUN/ROT, no generar pasos.
 
   // ¿Debemos generar un paso?
   bool canStep = isMovingState() && (v_now > 1.0f);
